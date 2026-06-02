@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "client": "electron .",
-    "build:win": "electron-builder --win --x64",
+    "build:win": "electron-builder --win --x64 --publish never",
     "serve": "python3 -m http.server 4173 --bind 0.0.0.0",
     "verify": "node scripts/verify-playwright.cjs"
   },
@@ -48,14 +48,17 @@
             "x64"
           ]
         }
-      ],
-      "artifactName": "${productName}-${version}-${arch}-${target}.${ext}"
+      ]
     },
     "nsis": {
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
     }
   },
   "devDependencies": {
