@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>汪雷霆：错题星链计划</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game" aria-label="汪雷霆：错题星链计划游戏画布"></canvas>
+
+      <section id="boot" class="boot boot--active" aria-live="polite">
+        <div class="boot__flare"></div>
+        <div class="boot__sigil">
+          <span class="boot__bolt">W</span>
+          <span class="boot__ring"></span>
+        </div>
+        <div class="boot__title">WANG THUNDER</div>
+        <div class="boot__subtitle">INTERACTIVE EXAM SYSTEMS</div>
+        <div class="boot__scan"></div>
+      </section>
+
+      <main id="overlay" class="overlay">
+        <section id="menu" class="screen screen--active">
+          <div class="brand">
+            <p class="brand__kicker">错题星链计划 / 火星养老测试版</p>
+            <h1>汪雷霆</h1>
+            <p class="brand__subtitle">把错误答案、电力危机和 AI 星链打成一场会破防的物理闯关。</p>
+          </div>
+
+          <div class="menu-layout">
+            <div class="panel panel--status">
+              <div class="stat">
+                <span>最高分</span>
+                <strong id="best-score">0</strong>
+              </div>
+              <div class="stat">
+                <span>最高波次</span>
+                <strong id="best-wave">0</strong>
+              </div>
+              <div class="stat">
+                <span>今日状态</span>
+                <strong>情况还不错</strong>
+              </div>
+            </div>
+
+            <div class="panel panel--actions">
+              <button id="start-btn" class="primary-action" type="button" data-mode="pve">
+                <span class="primary-action__icon">▶</span>
+                <span>人机对战</span>
+              </button>
+              <button id="duel-btn" class="ghost-action" type="button" data-mode="pvp">
+                本地双人
+              </button>
+              <button id="ai-btn" class="ghost-action" type="button" data-mode="aivai">
+                机机对战
+              </button>
+              <button id="how-btn" class="ghost-action" type="button">作战面板</button>
+            </div>
+
+            <div class="panel panel--brief">
+              <h2>任务</h2>
+              <p>选择本地双人、人机或机机对战，驾驶“指甲盖铜片”核心在错题星链战场内完成装甲决斗。</p>
+              <div class="chips">
+                <span>星链在线</span>
+                <span>雷霆槽预热</span>
+                <span>卷面扫描</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="briefing" class="screen">
+          <div class="modal">
+            <button id="close-briefing" class="icon-button" type="button" aria-label="关闭">×</button>
+            <h2>作战面板</h2>
+            <div class="brief-grid">
+              <p><strong>人机对战</strong>由玩家一号对抗 AI 载具，适合快速练习走位和射击。</p>
+              <p><strong>本地双人</strong>同屏对战，玩家一号使用 WASD/鼠标，玩家二号使用方向键/Enter。</p>
+              <p><strong>基地系统</strong>必须进入己方基地才能启用军用导航 Freecam，视角可从高空扫描未被建筑遮挡的目标。</p>
+              <p><strong>近防炮</strong>基地内可借助 Freecam 手动瞄准压制，理论射速 13000 发/分钟。</p>
+              <p><strong>胜负规则</strong>击毁对手或攻陷敌方基地，超时按剩余装甲和命中数判定。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="hud" class="hud">
+          <div class="damage-vignette" id="damage-vignette"></div>
+          <div class="combat-top">
+            <span id="bearing">北 030</span>
+            <span id="mission-phase">目标区：错题星链</span>
+            <span id="altitude">高度 1.8 km</span>
+          </div>
+          <div class="wave-alert" id="wave-alert">第 1 波 · 梯子上线</div>
+          <div class="reticle" id="reticle" aria-hidden="true">
+            <span></span>
+          </div>
+          <div class="hit-marker" id="hit-marker">HIT</div>
+          <div class="target-lock" id="target-lock">NO LOCK</div>
+          <div class="radar" id="radar" aria-label="军用导航">
+            <div class="radar__rings"></div>
+            <div class="radar__sweep"></div>
+            <div class="radar__blips" id="radar-blips"></div>
+          </div>
+          <div class="combat-log" id="combat-log"></div>
+          <div class="hud__left">
+            <span id="score">0</span>
+            <small>分数</small>
+          </div>
+          <div class="hud__center">
+            <div class="meter"><span id="health-bar"></span></div>
+            <div class="meter meter--charge"><span id="charge-bar"></span></div>
+            <div class="weapon-strip">
+              <span id="weapon-state">主炮 待命</span>
+              <span id="combo-state">COMBO x1.0</span>
+              <span id="system-state">装甲稳定</span>
+            </div>
+            <div class="radio-line" id="radio-line">星链计划接入，火星养老航线已点亮。</div>
+          </div>
+          <div class="hud__right">
+            <span id="wave">1</span>
+            <small>波次</small>
+          </div>
+        </section>
+
+        <section id="pause" class="pause-layer">
+          <div class="pause-panel">
+            <div class="eyebrow">系统暂停</div>
+            <h2>雷霆课堂保持锁定</h2>
+            <p>作战链路冻结，目标队列保留。</p>
+          </div>
+        </section>
+
+        <section id="result" class="screen">
+          <div class="modal modal--result">
+            <h2 id="result-title">课堂结束</h2>
+            <p id="result-copy"></p>
+            <div class="result-stats">
+              <div><span id="final-score">0</span><small>分数</small></div>
+              <div><span id="final-wave">1</span><small>波次</small></div>
+              <div><span id="final-rank">B</span><small>评级</small></div>
+            </div>
+            <button id="restart-btn" class="primary-action" type="button">
+              <span class="primary-action__icon">↻</span>
+              <span>再来一局</span>
+            </button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./src/js/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,66 @@
+{
+  "name": "wang-thunder",
+  "version": "1.0.0",
+  "description": "HTML + Three.js 3D arcade vehicle game based on prompts.txt.",
+  "main": "src/electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "client": "electron .",
+    "build:win": "electron-builder --win --x64",
+    "serve": "python3 -m http.server 4173 --bind 0.0.0.0",
+    "verify": "node scripts/verify-playwright.cjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wang-s-Team/Wang-Thunder.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Wang-s-Team/Wang-Thunder/issues"
+  },
+  "homepage": "https://github.com/Wang-s-Team/Wang-Thunder#readme",
+  "build": {
+    "appId": "team.wang.wang-thunder",
+    "productName": "Wang Thunder",
+    "directories": {
+      "output": "dist/windows"
+    },
+    "files": [
+      "index.html",
+      "styles.css",
+      "assets/**/*",
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}-${target}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^42.3.1",
+    "electron-builder": "^26.0.12",
+    "playwright": "^1.60.0"
+  }
+}

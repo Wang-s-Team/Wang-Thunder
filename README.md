@@ -1,0 +1,84 @@
+# 汪雷霆：错题星链计划
+
+![汪雷霆：错题星链计划 3D 宣传图](assets/promo.png)
+
+一个基于 HTML、Three.js 和 ES Modules 的原创 3D 载具对战小游戏。项目素材来自 `prompts.txt`，被拆成课堂广播和战斗文本，用于生成对战氛围。
+
+新版画面加入程序化装甲贴图、履带轮组、弹坑、跑道灯、远景山脊、星空、烟尘和多层战斗灯光；战斗地图也扩大为更开阔的星链靶场。
+
+## 模式
+
+- 本地双人：同屏两名玩家对战
+- 人机对战：玩家一号对抗 AI 载具
+- 机机对战：两台 AI 自动决斗
+- 基地规则：每方都有基地，敌方攻陷基地会直接获胜
+- 军用导航：载具必须在己方基地内才会启用高空 Freecam，导航只标记未被建筑遮挡的目标
+- 近防炮：基地内可手动瞄准近防炮压制，理论射速 13000 发/分钟
+
+## 运行
+
+```bash
+python3 -m http.server 4173 --bind 0.0.0.0
+```
+
+打开 `http://127.0.0.1:4173/`。
+
+也可以使用：
+
+```bash
+npm run serve
+```
+
+## 本地客户端
+
+项目已加入 Electron 本地客户端。安装依赖后可以直接启动桌面窗口：
+
+```bash
+npm install
+npm run client
+```
+
+在 Windows 上本地打包：
+
+```bash
+npm run build:win
+```
+
+打包产物会输出到 `dist/windows/`，包括 Windows 安装包和便携版。
+
+## GitHub Actions
+
+仓库包含 `.github/workflows/windows-client.yml`，会在 `main` / `master` 推送、Pull Request 或手动触发时，在 `windows-latest` 环境中运行：
+
+```bash
+npm ci
+npm run build:win
+```
+
+完成后可以在 Actions 页面下载 `wang-thunder-windows-client` artifact。
+
+## 操作
+
+- 玩家一号：`WASD` 移动，鼠标移动准心，`空格` 或鼠标按下开火
+- 玩家二号：方向键移动，`Enter` 开火
+- 基地内：自动接入军用导航 Freecam，鼠标指向战场位置并可带动近防炮瞄准
+- `P` / `Esc`：暂停或继续
+
+## 验证
+
+```bash
+npm install
+npx playwright install chromium
+npm run verify
+```
+
+验证脚本会分别启动人机、本地双人、机机对战，并在桌面/移动视口截图和抽样 WebGL canvas 像素，确认模式入口和 3D 画面有效。
+
+## 结构
+
+- `index.html`：游戏壳、开屏 Logo、菜单、HUD、准星和结算层
+- `styles.css`：开屏动画、响应式布局和游戏 UI
+- `src/data/prompts.js`：从 `prompts.txt` 整理出的词条库
+- `src/js/core`：输入、音频、存档、事件总线、场景管理和 3D 工厂
+- `src/js/scenes`：开屏、菜单、游戏、结算场景
+- `src/vendor/three.module.js`：本地 Three.js 模块
