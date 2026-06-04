@@ -27,6 +27,7 @@ const ENERGY_SHOT_COST = 16;
 const ENERGY_DYNAMITE_COST = 38;
 const ENERGY_BEARING_COST = 24;
 const ENERGY_CIWS_ROUND_COST = 0.06;
+const ENERGY_ANTI_AIR_COST = 32;
 const DYNAMITE_RADIUS = 10.5;
 const DYNAMITE_DAMAGE = 18;
 const DYNAMITE_KNOCKBACK = 50;
@@ -36,6 +37,9 @@ const BEARING_SLIP_SECONDS = 2.6;
 const BEARING_SLIP_IMPULSE = 30;
 const BLAST_GRAVITY = 34;
 const STARLINK_COOLDOWN_SECONDS = 18;
+const STARLINK_FLIGHT_SECONDS = 9.2;
+const ANTI_AIR_SPEED = 94;
+const ANTI_AIR_LIFE_SECONDS = 7.2;
 const MODES = {
   pve: { name: "人机对战", controllers: ["human1", "ai"], phase: "玩家一号 VS AI" },
   pvp: { name: "本地双人", controllers: ["human1", "human2"], phase: "本地双人对战" },
@@ -119,6 +123,8 @@ export class GameScene {
     this.tracers = [];
     this.flashes = [];
     this.starlinkEffects = [];
+    this.activeStarlinks = [];
+    this.antiAirMissiles = [];
     this.dust = [];
     this.clock = 0;
     this.roundTime = ROUND_SECONDS;
@@ -221,8 +227,11 @@ export class GameScene {
     }
 
     this.updateProjectiles(dt);
+    this.updateAntiAirMissiles(dt);
+    this.updateStarlinkThreats(dt);
     this.updateEffects(dt);
     this.resolveHits();
+    this.resolveStarlinkInterceptions();
     this.updateNavigationState(dt);
     this.updateStarlink();
     this.updateCamera(dt);
@@ -341,6 +350,10 @@ export class GameScene {
     vehicle.slipTimer = Math.max(0, vehicle.slipTimer - dt);
     vehicle.slipPhase += dt * (vehicle.slipTimer > 0 ? 14 : 4);
     this.updateKettleEnergy(vehicle, dt);
+    if (this.controlledAntiAirFor(vehicle)) {
+      vehicle.velocity.set(0, 0, 0);
+      return;
+    }
     if (vehicle.controller === "human1") {
       this.updateFirstPersonVehicle(vehicle, enemy, dt);
       return;
@@ -798,12 +811,13 @@ export class GameScene {
       return;
     }
 
-    const aimPoint = this.ciwsAimPoint(owner, enemy);
+    const incomingStarlink = this.incomingStarlinkFor(owner);
+    const aimPoint = incomingStarlink ? this.ciwsStarlinkAimPoint(incomingStarlink) : this.ciwsAimPoint(owner, enemy);
     const turretAngle = angleToTarget(base, aimPoint);
     base.turret.rotation.y = lerpAngle(base.turret.rotation.y, turretAngle, Math.min(1, dt * 9));
 
-    const wantsFire = owner.controller === "ai" ? this.aiWantsCiws(base, enemy) : this.input.isFiringFor(owner.id);
-    if (!wantsFire || !this.hasLineOfSight(base, aimPoint)) {
+    const wantsFire = incomingStarlink || (owner.controller === "ai" ? this.aiWantsCiws(base, enemy) : this.input.isFiringFor(owner.id));
+    if (!wantsFire || (!incomingStarlink && !this.hasLineOfSight(base, aimPoint))) {
       base.ciwsAccumulator = Math.min(base.ciwsAccumulator, 2);
       return;
     }
@@ -814,7 +828,7 @@ export class GameScene {
     base.ciwsAccumulator -= shots;
 
     for (let i = 0; i < shots; i += 1) {
-      if (!this.fireCiwsRound(base, owner, aimPoint, i)) break;
+      if (!this.fireCiwsRound(base, owner, aimPoint, i, Boolean(incomingStarlink))) break;
     }
   }
 
@@ -825,18 +839,29 @@ export class GameScene {
     return predictedAimPoint(enemy, owner.controller === "ai" ? 0.08 : 0.04);
   }
 
+  ciwsStarlinkAimPoint(strike) {
+    const error = 10 + Math.random() * 18;
+    return {
+      x: strike.position.x + (Math.random() - 0.5) * error,
+      y: strike.position.y + (Math.random() - 0.5) * error * 0.35,
+      z: strike.position.z + (Math.random() - 0.5) * error,
+    };
+  }
+
   aiWantsCiws(base, enemy) {
     return distanceXZ(base, enemy) < 160 && this.hasLineOfSight(base, predictedAimPoint(enemy, 0.08));
   }
 
-  fireCiwsRound(base, owner, aimPoint, index) {
+  fireCiwsRound(base, owner, aimPoint, index, antiStarlink = false) {
     if (!this.spendEnergy(owner, ENERGY_CIWS_ROUND_COST, "近防炮能量不足，基地锅炉烧开水中")) {
       return false;
     }
     const muzzlePosition = new THREE.Vector3();
     base.muzzle.getWorldPosition(muzzlePosition);
-    const jitter = new THREE.Vector3((Math.random() - 0.5) * 1.1, 0, (Math.random() - 0.5) * 1.1);
-    const target = new THREE.Vector3(aimPoint.x, 1.65, aimPoint.z).add(jitter);
+    const spread = antiStarlink ? 16 : 1.1;
+    const height = antiStarlink ? aimPoint.y ?? 24 : 1.65;
+    const jitter = new THREE.Vector3((Math.random() - 0.5) * spread, (Math.random() - 0.5) * spread * 0.35, (Math.random() - 0.5) * spread);
+    const target = new THREE.Vector3(aimPoint.x, height, aimPoint.z).add(jitter);
     const shotDirection = target.sub(muzzlePosition).normalize();
     const projectile = new THREE.Mesh(
       new THREE.SphereGeometry(0.07, 8, 6),
@@ -855,6 +880,7 @@ export class GameScene {
       life: 1.05,
       damage: 2.2,
       ciws: true,
+      ciwsAntiStarlink: antiStarlink,
     };
     this.scene.add(projectile);
     this.projectiles.push(projectile);
@@ -941,11 +967,23 @@ export class GameScene {
 
   updateStarlink() {
     for (const vehicle of this.vehicles) {
-      if (!vehicle.alive || !vehicle.controller.startsWith("human")) continue;
-      if (this.input.consumeStarlinkFor(vehicle.id)) {
+      if (!vehicle.alive) continue;
+      if (vehicle.controller.startsWith("human") && this.input.consumeStarlinkFor(vehicle.id)) {
+        this.tryActivateStarlink(vehicle);
+      } else if (vehicle.controller === "ai" && this.aiWantsStarlink(vehicle)) {
         this.tryActivateStarlink(vehicle);
       }
+      if (vehicle.controller.startsWith("human") && this.input.consumeAntiAirFor(vehicle.id)) {
+        this.tryLaunchAntiAir(vehicle);
+      }
     }
+  }
+
+  aiWantsStarlink(vehicle) {
+    if (this.clock < 7 || !this.canActivateStarlink(vehicle)) return false;
+    if (this.activeStarlinks.some((strike) => strike.ownerId === vehicle.id)) return false;
+    const enemy = this.enemyOf(vehicle);
+    return distanceXZ(vehicle, enemy) > 62 && Math.random() < 0.012;
   }
 
   applyBearingHit(projectile, target, owner) {
@@ -985,7 +1023,7 @@ export class GameScene {
     const enemy = this.enemyOf(vehicle);
     const base = this.baseOf(vehicle);
     if (!enemy?.alive || !base) return;
-    if (!this.navigationActive || this.navigator !== vehicle) {
+    if (!this.hasBaseRadarLink(vehicle)) {
       this.pushLog(`${vehicle.name} 星链计划锁止：需要基地雷达`);
       return;
     }
@@ -999,25 +1037,52 @@ export class GameScene {
     }
 
     vehicle.starlinkCooldown = STARLINK_COOLDOWN_SECONDS;
-    vehicle.hits += 1;
-    vehicle.score += 9000 + enemy.health * 90;
-    enemy.health = 0;
-    enemy.alive = false;
-    enemy.blastVelocity.set(0, 0, 0);
-    enemy.verticalVelocity = 0;
-    enemy.air = 0;
-    enemy.group.position.set(enemy.x, 0, enemy.z);
-    this.hitTimer = 0.75;
-    this.damageFlash = Math.max(this.damageFlash, enemy.controller.startsWith("human") ? 0.9 : 0.42);
-    this.shake = Math.max(this.shake, 2.4);
-    this.radio = "星链计划完成雷达引导，轨道打击命中目标。";
-    this.radioTimer = 4.4;
-    this.addStarlinkStrike(enemy, vehicle.accent);
-    this.addExplosion(enemy.group.position.clone().add(new THREE.Vector3(0, 2.4, 0)), vehicle.accent, 42);
-    this.pushLog(`${vehicle.name} 星链计划秒杀 ${enemy.name}`);
-    this.audio.beep({ frequency: 1320, duration: 0.12, type: "sawtooth", gain: 0.045 });
-    this.audio.beep({ frequency: 240, duration: 0.18, type: "square", gain: 0.04 });
-    this.finishRound(vehicle, "STARLINK_STRIKE");
+    this.launchStarlinkStrike(vehicle, enemy);
+  }
+
+  canActivateStarlink(vehicle) {
+    if (!vehicle?.alive || vehicle.starlinkCooldown > 0) return false;
+    const enemy = this.enemyOf(vehicle);
+    const base = this.baseOf(vehicle);
+    return Boolean(enemy?.alive && base && this.hasBaseRadarLink(vehicle) && this.hasLineOfSight(base, enemy));
+  }
+
+  hasBaseRadarLink(vehicle) {
+    const base = this.baseOf(vehicle);
+    return Boolean(vehicle?.alive && base && this.isInsideBase(vehicle, base));
+  }
+
+  launchStarlinkStrike(owner, enemy) {
+    const targetBase = this.baseOf(enemy);
+    if (!targetBase) return;
+    const start = new THREE.Vector3(
+      THREE.MathUtils.clamp(targetBase.x + (owner.id === 1 ? 58 : -58), -ARENA.x, ARENA.x),
+      138,
+      THREE.MathUtils.clamp(targetBase.z + (owner.id === 1 ? -74 : 74), ARENA.zMin, ARENA.zMax),
+    );
+    const target = new THREE.Vector3(targetBase.x, 0.8, targetBase.z);
+    const group = makeStarlinkProjectile(owner.accent);
+    group.position.copy(start);
+    group.lookAt(target);
+    this.scene.add(group);
+    this.activeStarlinks.push({
+      ownerId: owner.id,
+      targetId: enemy.id,
+      targetBase,
+      group,
+      start,
+      target,
+      position: start.clone(),
+      elapsed: 0,
+      life: STARLINK_FLIGHT_SECONDS,
+    });
+    this.waveAlertTimer = Math.max(this.waveAlertTimer, 2.4);
+    this.radio = owner.controller.startsWith("human")
+      ? "我方已发射星链计划，等待轨道弹体入场。"
+      : "对方星链计划升空，基地雷达已捕获行动轨迹。";
+    this.radioTimer = 4.6;
+    this.pushLog(`${owner.name} 已发射星链计划`);
+    this.audio.beep({ frequency: 1320, duration: 0.1, type: "sawtooth", gain: 0.04 });
   }
 
   addStarlinkStrike(target, color) {
@@ -1065,6 +1130,196 @@ export class GameScene {
 
     this.scene.add(group);
     this.starlinkEffects.push(group);
+  }
+
+  tryLaunchAntiAir(vehicle) {
+    if (!vehicle?.alive) return;
+    const threat = this.incomingStarlinkFor(vehicle);
+    if (!threat) {
+      this.pushLog(`${vehicle.name} 防空武器锁止：未发现来袭星链`);
+      return;
+    }
+    if (this.antiAirMissiles.some((missile) => missile.ownerId === vehicle.id)) {
+      this.pushLog(`${vehicle.name} 防空武器已在飞行`);
+      return;
+    }
+    if (!this.spendEnergy(vehicle, ENERGY_ANTI_AIR_COST, `${vehicle.name} 防空武器能量不足，回基地烧开水后再发射`)) {
+      return;
+    }
+
+    const base = this.baseOf(vehicle);
+    const start = new THREE.Vector3(base?.x ?? vehicle.x, 5.6, base?.z ?? vehicle.z);
+    const toThreat = threat.position.clone().sub(start).normalize();
+    const heading = Math.atan2(-toThreat.x, -toThreat.z);
+    const pitch = THREE.MathUtils.clamp(Math.asin(toThreat.y), -0.35, 0.72);
+    const group = makeAntiAirMissile(vehicle.accent);
+    group.position.copy(start);
+    group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), toThreat);
+    this.scene.add(group);
+    this.antiAirMissiles.push({
+      ownerId: vehicle.id,
+      group,
+      heading,
+      pitch,
+      velocity: toThreat.multiplyScalar(ANTI_AIR_SPEED),
+      life: ANTI_AIR_LIFE_SECONDS,
+      controlled: vehicle.controller.startsWith("human"),
+    });
+    this.radio = `${vehicle.name} 防空武器已发射，切换弹体视角。`;
+    this.radioTimer = 3.8;
+    this.pushLog(`${vehicle.name} 发射防空武器拦截星链`);
+    this.audio.beep({ frequency: 720, duration: 0.08, type: "triangle", gain: 0.036 });
+  }
+
+  updateAntiAirMissiles(dt) {
+    for (const missile of this.antiAirMissiles) {
+      const owner = this.vehicles.find((vehicle) => vehicle.id === missile.ownerId);
+      if (missile.controlled && owner?.alive) {
+        this.steerAntiAirMissile(missile, owner, dt);
+      } else {
+        this.guideAntiAirMissile(missile, dt);
+      }
+      const direction = directionFromHeadingPitch(missile.heading, missile.pitch);
+      missile.velocity.copy(direction).multiplyScalar(ANTI_AIR_SPEED);
+      const previous = missile.group.position.clone();
+      missile.group.position.addScaledVector(missile.velocity, dt);
+      missile.group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
+      missile.group.userData.trailTimer = (missile.group.userData.trailTimer ?? 0) - dt;
+      if (missile.group.userData.trailTimer <= 0) {
+        this.addTracer(previous, missile.group.position.clone(), owner?.accent ?? 0xffd166);
+        missile.group.userData.trailTimer = 0.035;
+      }
+      missile.life -= dt;
+    }
+
+    const removed = this.antiAirMissiles.filter(
+      (missile) =>
+        missile.life <= 0 ||
+        Math.abs(missile.group.position.x) > PROJECTILE_BOUNDS.x ||
+        missile.group.position.y < -2 ||
+        missile.group.position.y > 180 ||
+        missile.group.position.z < PROJECTILE_BOUNDS.zMin ||
+        missile.group.position.z > PROJECTILE_BOUNDS.zMax,
+    );
+    for (const missile of removed) {
+      this.scene.remove(missile.group);
+      if (!missile.intercepted) {
+        this.pushLog("防空武器失去拦截窗口");
+      }
+    }
+    this.antiAirMissiles = this.antiAirMissiles.filter((missile) => !removed.includes(missile));
+  }
+
+  steerAntiAirMissile(missile, owner, dt) {
+    if (owner.controller === "human1") {
+      const mouse = this.input.consumeMouseDelta();
+      missile.heading = wrapAngle(missile.heading - mouse.x * 0.0027);
+      missile.pitch = THREE.MathUtils.clamp(missile.pitch - mouse.y * 0.0027, -0.62, 0.82);
+    }
+    const axis = this.input.axisFor(owner.id);
+    missile.heading = wrapAngle(missile.heading - axis.x * dt * 1.35);
+    missile.pitch = THREE.MathUtils.clamp(missile.pitch - axis.y * dt * 0.9, -0.62, 0.82);
+  }
+
+  guideAntiAirMissile(missile, dt) {
+    const threat = this.activeStarlinks.find((strike) => strike.targetId === missile.ownerId);
+    if (!threat) return;
+    const desired = threat.position.clone().sub(missile.group.position).normalize();
+    const desiredHeading = Math.atan2(-desired.x, -desired.z);
+    const desiredPitch = Math.asin(THREE.MathUtils.clamp(desired.y, -1, 1));
+    missile.heading = lerpAngle(missile.heading, desiredHeading, Math.min(1, dt * 0.8));
+    missile.pitch = THREE.MathUtils.lerp(missile.pitch, desiredPitch, Math.min(1, dt * 0.7));
+  }
+
+  updateStarlinkThreats(dt) {
+    for (const strike of this.activeStarlinks) {
+      strike.elapsed += dt;
+      strike.life -= dt;
+      const t = THREE.MathUtils.clamp(strike.elapsed / STARLINK_FLIGHT_SECONDS, 0, 1);
+      strike.position.lerpVectors(strike.start, strike.target, t);
+      strike.position.y += Math.sin(t * Math.PI) * 18;
+      strike.group.position.copy(strike.position);
+      strike.group.lookAt(strike.target);
+      strike.group.rotation.z += dt * 5.5;
+      if (t >= 1) {
+        this.resolveStarlinkImpact(strike);
+      }
+    }
+    const expired = this.activeStarlinks.filter((strike) => strike.life <= 0);
+    for (const strike of expired) {
+      this.scene.remove(strike.group);
+    }
+    this.activeStarlinks = this.activeStarlinks.filter((strike) => strike.life > 0);
+  }
+
+  resolveStarlinkInterceptions() {
+    for (const strike of this.activeStarlinks) {
+      if (strike.life <= 0) continue;
+      const directHit = this.antiAirMissiles.find(
+        (missile) => missile.ownerId === strike.targetId && missile.group.position.distanceTo(strike.position) < 6.2,
+      );
+      const ciwsHit = this.projectiles.find(
+        (projectile) =>
+          projectile.userData.ciwsAntiStarlink &&
+          projectile.userData.owner === strike.targetId &&
+          projectile.position.distanceTo(strike.position) < 1.15,
+      );
+      if (!directHit && !ciwsHit) continue;
+      const defender = this.vehicles.find((vehicle) => vehicle.id === strike.targetId);
+      const attacker = this.vehicles.find((vehicle) => vehicle.id === strike.ownerId);
+      if (!defender) continue;
+      if (directHit) {
+        directHit.life = 0;
+        directHit.intercepted = true;
+      }
+      if (ciwsHit) ciwsHit.userData.life = 0;
+      strike.life = 0;
+      defender.score += directHit ? 6200 : 2200;
+      defender.hits += 1;
+      this.shake = Math.max(this.shake, directHit ? 2.1 : 1.2);
+      this.hitTimer = Math.max(this.hitTimer, 0.7);
+      this.radio = directHit ? "防空武器命中，对方星链计划已被拦截。" : "近防炮擦中星链弹体，拦截成功。";
+      this.radioTimer = 4.2;
+      this.addExplosion(strike.position.clone(), defender?.accent ?? 0x43e0ff, directHit ? 54 : 34);
+      this.pushLog(`${defender.name} 拦截 ${attacker?.name ?? "对方"} 星链计划`);
+      this.audio.beep({ frequency: 420, duration: 0.18, type: "triangle", gain: 0.05 });
+      this.audio.beep({ frequency: 980, duration: 0.08, type: "square", gain: 0.034 });
+    }
+  }
+
+  resolveStarlinkImpact(strike) {
+    if (strike.life <= 0 || this.finished) return;
+    const owner = this.vehicles.find((vehicle) => vehicle.id === strike.ownerId);
+    const target = this.vehicles.find((vehicle) => vehicle.id === strike.targetId);
+    if (!owner || !target) return;
+    strike.life = 0;
+    owner.hits += 1;
+    owner.score += 9000 + target.health * 90;
+    target.health = 0;
+    target.alive = false;
+    target.blastVelocity.set(0, 0, 0);
+    target.verticalVelocity = 0;
+    target.air = 0;
+    target.group.position.set(target.x, 0, target.z);
+    this.hitTimer = 0.75;
+    this.damageFlash = Math.max(this.damageFlash, target.controller.startsWith("human") ? 0.9 : 0.42);
+    this.shake = Math.max(this.shake, 2.5);
+    this.radio = "星链计划突破防空圈，轨道打击命中基地。";
+    this.radioTimer = 4.4;
+    this.addStarlinkStrike(strike.targetBase, owner.accent);
+    this.addExplosion(new THREE.Vector3(strike.targetBase.x, 2.4, strike.targetBase.z), owner.accent, 56);
+    this.pushLog(`${owner.name} 星链计划击毁 ${strike.targetBase.name}`);
+    this.audio.beep({ frequency: 1320, duration: 0.12, type: "sawtooth", gain: 0.045 });
+    this.audio.beep({ frequency: 240, duration: 0.18, type: "square", gain: 0.04 });
+    this.finishRound(owner, "STARLINK_STRIKE");
+  }
+
+  incomingStarlinkFor(vehicle) {
+    return this.activeStarlinks.find((strike) => strike.targetId === vehicle.id && strike.life > 0);
+  }
+
+  controlledAntiAirFor(vehicle) {
+    return this.antiAirMissiles.find((missile) => missile.ownerId === vehicle?.id && missile.controlled && missile.life > 0);
   }
 
   detonateDynamite(projectile) {
@@ -1124,6 +1379,11 @@ export class GameScene {
   }
 
   updatePrimaryCamera(dt) {
+    const p1Missile = this.controlledAntiAirFor(this.vehicles[0]);
+    if (p1Missile) {
+      this.updateAntiAirCamera(this.camera, p1Missile, dt);
+      return;
+    }
     const human = this.vehicles.find((vehicle) => vehicle.controller === "human1" && vehicle.alive);
     if (human) {
       this.updateFirstPersonCamera(human);
@@ -1149,7 +1409,24 @@ export class GameScene {
     if (!this.usesSplitScreen() || !this.p2Camera) return;
     const p2 = this.vehicles[1];
     if (!p2) return;
+    const p2Missile = this.controlledAntiAirFor(p2);
+    if (p2Missile) {
+      this.updateAntiAirCamera(this.p2Camera, p2Missile, dt);
+      return;
+    }
     this.updateThirdPersonCamera(this.p2Camera, p2, dt);
+  }
+
+  updateAntiAirCamera(camera, missile, dt) {
+    const direction = directionFromHeadingPitch(missile.heading, missile.pitch);
+    const right = rightFromHeading(missile.heading);
+    const targetPosition = missile.group.position
+      .clone()
+      .addScaledVector(direction, -7.2)
+      .addScaledVector(right, 0.8)
+      .add(new THREE.Vector3(0, 2.2, 0));
+    camera.position.lerp(targetPosition, Math.min(1, dt * 10));
+    camera.lookAt(missile.group.position.clone().addScaledVector(direction, 26));
   }
 
   updateThirdPersonCamera(camera, vehicle, dt) {
@@ -1212,8 +1489,19 @@ export class GameScene {
     this.elements.waveAlert.textContent = `${this.modeInfo.name} · ${formatTime(seconds)}`;
     this.elements.waveAlert.classList.toggle("wave-alert--active", this.waveAlertTimer > 0);
     this.elements.combatLog.innerHTML = this.logs.map((line) => `<span>${line}</span>`).join("");
+    this.updateStarlinkBossBar(p1);
     this.updateAimHud(p1);
     this.updateRadar();
+  }
+
+  updateStarlinkBossBar(primaryVehicle) {
+    const threat = this.incomingStarlinkFor(primaryVehicle);
+    this.elements.starlinkBoss?.classList.toggle("boss-bar--active", Boolean(threat));
+    if (!threat) return;
+    const progress = THREE.MathUtils.clamp(threat.life / STARLINK_FLIGHT_SECONDS, 0, 1);
+    const attacker = this.vehicles.find((vehicle) => vehicle.id === threat.ownerId);
+    this.elements.starlinkBossLabel.textContent = `${attacker?.name ?? "对方"}已发射星链计划 · F 发射防空`;
+    this.elements.starlinkBossFill.style.width = `${progress * 100}%`;
   }
 
   systemStateText(primaryVehicle) {
@@ -1266,8 +1554,10 @@ export class GameScene {
   }
 
   updateRadar() {
-    const navigator = this.navigator;
-    this.elements.radar.classList.toggle("radar--offline", !this.navigationActive);
+    const primaryThreat = this.incomingStarlinkFor(this.vehicles[0]);
+    const navigator = this.navigator ?? (primaryThreat ? this.vehicles[0] : null);
+    const threatTracking = Boolean(primaryThreat && navigator);
+    this.elements.radar.classList.toggle("radar--offline", !this.navigationActive && !threatTracking);
     this.elements.radar.classList.toggle("radar--starlink-ready", this.starlinkReadyFor(navigator));
     if (!navigator) {
       this.elements.radarBlips.innerHTML = "";
@@ -1277,6 +1567,9 @@ export class GameScene {
     const navBase = this.baseOf(navigator);
     const starlinkReady = this.starlinkReadyFor(navigator);
     const starlinkTarget = this.enemyOf(navigator);
+    const starlinkTracks = this.activeStarlinks
+      .filter((strike) => strike.ownerId !== navigator.id || this.hasLineOfSight(navBase, strike.position))
+      .map((strike) => this.radarTrackFor(strike));
     const dots = [
       ...this.bases.map((base) => ({ x: base.x, z: base.z, kind: base.ownerId === 1 ? "base-blue" : "base-red" })),
       ...this.vehicles
@@ -1290,24 +1583,53 @@ export class GameScene {
         x: projectile.position.x,
         z: projectile.position.z,
         kind: projectile.userData.owner === 1 ? "shot-blue" : "shot-red",
-      })).filter((projectile) => this.hasLineOfSight(navBase, projectile)),
+      })).filter((projectile) => navBase && this.hasLineOfSight(navBase, projectile)),
+      ...this.activeStarlinks.map((strike) => ({
+        x: strike.position.x,
+        z: strike.position.z,
+        kind: strike.targetId === navigator.id ? "starlink-incoming" : "starlink-outgoing",
+      })),
+      ...this.antiAirMissiles.map((missile) => ({
+        x: missile.group.position.x,
+        z: missile.group.position.z,
+        kind: missile.ownerId === navigator.id ? "interceptor" : "shot-red",
+      })),
     ];
     const centerZ = ARENA_CENTER_Z;
     const halfZ = (ARENA.zMax - ARENA.zMin) / 2;
-    this.elements.radarBlips.innerHTML = dots
+    this.elements.radarBlips.innerHTML = [
+      ...starlinkTracks.map((track) => {
+        if (!track) return "";
+        return `<span class="radar__track radar__track--${track.hostile ? "hostile" : "friendly"}" style="left:${track.left}%;top:${track.top}%;width:${track.width}%;transform:rotate(${track.angle}deg)"></span>`;
+      }),
+      ...dots
       .map((dot) => {
         const left = THREE.MathUtils.clamp(50 + (dot.x / ARENA.x) * 42, 8, 92);
         const top = THREE.MathUtils.clamp(50 + ((dot.z - centerZ) / halfZ) * 42, 8, 92);
         return `<span class="radar__blip radar__blip--${dot.kind}" style="left:${left}%;top:${top}%"></span>`;
-      })
-      .join("");
+      }),
+    ].join("");
+  }
+
+  radarTrackFor(strike) {
+    const centerZ = ARENA_CENTER_Z;
+    const halfZ = (ARENA.zMax - ARENA.zMin) / 2;
+    const startLeft = THREE.MathUtils.clamp(50 + (strike.start.x / ARENA.x) * 42, 8, 92);
+    const startTop = THREE.MathUtils.clamp(50 + ((strike.start.z - centerZ) / halfZ) * 42, 8, 92);
+    const endLeft = THREE.MathUtils.clamp(50 + (strike.target.x / ARENA.x) * 42, 8, 92);
+    const endTop = THREE.MathUtils.clamp(50 + ((strike.target.z - centerZ) / halfZ) * 42, 8, 92);
+    return {
+      hostile: strike.targetId === this.navigator?.id,
+      left: startLeft,
+      top: startTop,
+      width: Math.hypot(endLeft - startLeft, endTop - startTop),
+      angle: (Math.atan2(endTop - startTop, endLeft - startLeft) * 180) / Math.PI,
+    };
   }
 
   starlinkReadyFor(vehicle) {
-    if (!vehicle?.alive || !this.navigationActive || this.navigator !== vehicle || vehicle.starlinkCooldown > 0) return false;
-    const enemy = this.enemyOf(vehicle);
-    const base = this.baseOf(vehicle);
-    return Boolean(enemy?.alive && base && this.hasLineOfSight(base, enemy));
+    if (!vehicle?.alive || !this.navigationActive || this.navigator !== vehicle) return false;
+    return this.canActivateStarlink(vehicle);
   }
 
   activeNavigator() {
@@ -1727,6 +2049,86 @@ function makeBearingProjectile(accent) {
   return group;
 }
 
+function makeStarlinkProjectile(accent) {
+  const group = new THREE.Group();
+  const coreMaterial = new THREE.MeshStandardMaterial({
+    color: 0xdfe9f0,
+    roughness: 0.34,
+    metalness: 0.72,
+    emissive: new THREE.Color(accent).multiplyScalar(0.18),
+  });
+  const glowMaterial = new THREE.MeshBasicMaterial({
+    color: accent,
+    transparent: true,
+    opacity: 0.5,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const body = new THREE.Mesh(new THREE.ConeGeometry(0.7, 3.8, 24), coreMaterial);
+  body.rotation.x = Math.PI / 2;
+  group.add(body);
+
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.055, 8, 32), glowMaterial);
+  ring.rotation.y = Math.PI / 2;
+  group.add(ring);
+
+  const flare = new THREE.Mesh(new THREE.ConeGeometry(1.6, 5.8, 28, 1, true), glowMaterial);
+  flare.position.z = -3.8;
+  flare.rotation.x = -Math.PI / 2;
+  group.add(flare);
+
+  const light = new THREE.PointLight(accent, 1.8, 34);
+  light.position.z = -1.8;
+  group.add(light);
+  return group;
+}
+
+function makeAntiAirMissile(accent) {
+  const group = new THREE.Group();
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: 0xc8d1d5,
+    roughness: 0.38,
+    metalness: 0.55,
+  });
+  const finMaterial = new THREE.MeshStandardMaterial({
+    color: 0x30383d,
+    roughness: 0.46,
+    metalness: 0.42,
+  });
+  const glowMaterial = new THREE.MeshBasicMaterial({
+    color: accent,
+    transparent: true,
+    opacity: 0.72,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 2.6, 16), bodyMaterial);
+  body.rotation.x = Math.PI / 2;
+  group.add(body);
+
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.72, 16), bodyMaterial);
+  nose.position.z = 1.66;
+  nose.rotation.x = Math.PI / 2;
+  group.add(nose);
+
+  for (let i = 0; i < 4; i += 1) {
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.52, 0.42), finMaterial);
+    fin.position.z = -1.05;
+    fin.rotation.z = (i * Math.PI) / 2;
+    fin.position.x = Math.cos(fin.rotation.z) * 0.28;
+    fin.position.y = Math.sin(fin.rotation.z) * 0.28;
+    group.add(fin);
+  }
+
+  const exhaust = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.2, 18, 1, true), glowMaterial);
+  exhaust.position.z = -1.88;
+  exhaust.rotation.x = -Math.PI / 2;
+  group.add(exhaust);
+  group.add(new THREE.PointLight(accent, 1.4, 18));
+  return group;
+}
+
 function setupLighting(scene) {
   const sun = new THREE.DirectionalLight(0xfff6dc, 3.0);
   sun.position.set(96, 88, 72);
@@ -1758,6 +2160,11 @@ function forwardFromHeading(heading) {
 
 function rightFromHeading(heading) {
   return new THREE.Vector3(Math.cos(heading), 0, -Math.sin(heading)).normalize();
+}
+
+function directionFromHeadingPitch(heading, pitch) {
+  const flat = Math.cos(pitch);
+  return new THREE.Vector3(-Math.sin(heading) * flat, Math.sin(pitch), -Math.cos(heading) * flat).normalize();
 }
 
 function angleToTarget(source, target) {

@@ -718,6 +718,56 @@ h1 {
   transform: translate(-50%, 0);
 }
 
+.boss-bar {
+  position: absolute;
+  left: 50%;
+  top: 106px;
+  width: min(560px, 72vw);
+  transform: translate(-50%, -8px);
+  border: 1px solid rgba(255, 79, 100, 0.55);
+  border-radius: 8px;
+  padding: 8px 10px 10px;
+  background: rgba(5, 8, 12, 0.76);
+  box-shadow:
+    0 0 28px rgba(255, 79, 100, 0.24),
+    inset 0 0 20px rgba(255, 79, 100, 0.08);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.boss-bar--active {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.boss-bar__label {
+  margin-bottom: 6px;
+  color: #fff2f4;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.boss-bar__meter {
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 79, 100, 0.44);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.boss-bar__meter span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--red), var(--gold));
+  box-shadow: 0 0 16px rgba(255, 79, 100, 0.56);
+}
+
 .hit-marker {
   position: absolute;
   left: 50%;
@@ -873,6 +923,49 @@ h1 {
     0 0 12px var(--gold),
     0 0 26px rgba(255, 79, 100, 0.8);
   animation: starlinkTarget 760ms ease-in-out infinite alternate;
+}
+
+.radar__blip--starlink-incoming {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--red);
+  background: var(--gold);
+  box-shadow:
+    0 0 14px var(--red),
+    0 0 26px rgba(255, 209, 102, 0.72);
+  animation: starlinkTarget 520ms ease-in-out infinite alternate;
+}
+
+.radar__blip--starlink-outgoing,
+.radar__blip--interceptor {
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  background: transparent;
+}
+
+.radar__blip--starlink-outgoing {
+  color: var(--gold);
+}
+
+.radar__blip--interceptor {
+  color: var(--cyan);
+}
+
+.radar__track {
+  position: absolute;
+  height: 2px;
+  transform-origin: left center;
+  background: linear-gradient(90deg, currentColor, transparent);
+  opacity: 0.78;
+}
+
+.radar__track--hostile {
+  color: var(--red);
+}
+
+.radar__track--friendly {
+  color: var(--gold);
 }
 
 .radar__blip--base-blue,
@@ -1149,6 +1242,15 @@ h1 {
   .wave-alert {
     top: 92px;
     min-width: 180px;
+  }
+
+  .boss-bar {
+    top: 146px;
+    width: min(92vw, 360px);
+  }
+
+  .boss-bar__label {
+    font-size: 11px;
   }
 
   .weapon-strip {
