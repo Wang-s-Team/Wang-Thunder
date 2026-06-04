@@ -28,6 +28,7 @@ const DYNAMITE_DAMAGE = 18;
 const DYNAMITE_KNOCKBACK = 50;
 const DYNAMITE_LIFT = 13;
 const BLAST_GRAVITY = 34;
+const STARLINK_COOLDOWN_SECONDS = 18;
 const MODES = {
   pve: { name: "人机对战", controllers: ["human1", "ai"], phase: "玩家一号 VS AI" },
   pvp: { name: "本地双人", controllers: ["human1", "human2"], phase: "本地双人对战" },
@@ -106,6 +107,7 @@ export class GameScene {
     this.sparks = [];
     this.tracers = [];
     this.flashes = [];
+    this.starlinkEffects = [];
     this.dust = [];
     this.clock = 0;
     this.roundTime = ROUND_SECONDS;
@@ -134,7 +136,7 @@ export class GameScene {
     this.elements.hud.classList.add("hud--first-person");
     this.elements.pause.classList.remove("pause-layer--active");
     this.pushLog(`${this.modeInfo.name} 已启动`);
-    this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 发射雷管");
+    this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 发射雷管，E 呼叫星链");
     this.resize(window.innerWidth, window.innerHeight);
     this.updateHud();
   }
@@ -182,6 +184,7 @@ export class GameScene {
     for (const vehicle of this.vehicles) {
       if (!vehicle.alive) continue;
       vehicle.cooldown = Math.max(0, vehicle.cooldown - dt);
+      vehicle.starlinkCooldown = Math.max(0, vehicle.starlinkCooldown - dt);
       vehicle.invincible = Math.max(0, vehicle.invincible - dt);
       this.updateVehicle(vehicle, dt);
     }
@@ -197,6 +200,7 @@ export class GameScene {
     this.updateEffects(dt);
     this.resolveHits();
     this.updateNavigationState(dt);
+    this.updateStarlink();
     this.updateCamera(dt);
     this.updateHud();
 
@@ -232,6 +236,7 @@ export class GameScene {
       score: 0,
       hits: 0,
       cooldown: 0.8,
+      starlinkCooldown: 0,
       invincible: 0,
       energyBlockCooldown: 0,
       alive: true,
@@ -709,6 +714,7 @@ export class GameScene {
   updateEffects(dt) {
     this.fadeAndCull(this.tracers, dt, 0.08);
     this.fadeAndCull(this.flashes, dt, 0.11);
+    this.fadeAndCull(this.starlinkEffects, dt, 0.82);
     this.fadeAndCull(this.sparks, dt, 0.75, true);
     this.fadeAndCull(this.dust, dt, 0.75, true);
   }
@@ -770,6 +776,101 @@ export class GameScene {
         this.finishRound(owner, "KNOCKOUT");
       }
     }
+  }
+
+  updateStarlink() {
+    for (const vehicle of this.vehicles) {
+      if (!vehicle.alive || !vehicle.controller.startsWith("human")) continue;
+      if (this.input.consumeStarlinkFor(vehicle.id)) {
+        this.tryActivateStarlink(vehicle);
+      }
+    }
+  }
+
+  tryActivateStarlink(vehicle) {
+    const enemy = this.enemyOf(vehicle);
+    const base = this.baseOf(vehicle);
+    if (!enemy?.alive || !base) return;
+    if (!this.navigationActive || this.navigator !== vehicle) {
+      this.pushLog(`${vehicle.name} 星链计划锁止：需要基地雷达`);
+      return;
+    }
+    if (vehicle.starlinkCooldown > 0) {
+      this.pushLog(`${vehicle.name} 星链计划充能 ${Math.ceil(vehicle.starlinkCooldown)}s`);
+      return;
+    }
+    if (!this.hasLineOfSight(base, enemy)) {
+      this.pushLog(`${vehicle.name} 星链计划锁止：雷达被遮挡`);
+      return;
+    }
+
+    vehicle.starlinkCooldown = STARLINK_COOLDOWN_SECONDS;
+    vehicle.hits += 1;
+    vehicle.score += 9000 + enemy.health * 90;
+    enemy.health = 0;
+    enemy.alive = false;
+    enemy.blastVelocity.set(0, 0, 0);
+    enemy.verticalVelocity = 0;
+    enemy.air = 0;
+    enemy.group.position.set(enemy.x, 0, enemy.z);
+    this.hitTimer = 0.75;
+    this.damageFlash = Math.max(this.damageFlash, enemy.controller.startsWith("human") ? 0.9 : 0.42);
+    this.shake = Math.max(this.shake, 2.4);
+    this.radio = "星链计划完成雷达引导，轨道打击命中目标。";
+    this.radioTimer = 4.4;
+    this.addStarlinkStrike(enemy, vehicle.accent);
+    this.addExplosion(enemy.group.position.clone().add(new THREE.Vector3(0, 2.4, 0)), vehicle.accent, 42);
+    this.pushLog(`${vehicle.name} 星链计划秒杀 ${enemy.name}`);
+    this.audio.beep({ frequency: 1320, duration: 0.12, type: "sawtooth", gain: 0.045 });
+    this.audio.beep({ frequency: 240, duration: 0.18, type: "square", gain: 0.04 });
+    this.finishRound(vehicle, "STARLINK_STRIKE");
+  }
+
+  addStarlinkStrike(target, color) {
+    const group = new THREE.Group();
+    group.position.set(target.x, 0, target.z);
+    group.userData.life = 0.82;
+
+    const beamMaterial = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.78,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const coreMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.7,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 1.2, 96, 28, 1, true), beamMaterial);
+    beam.position.y = 48;
+    group.add(beam);
+
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.3, 98, 16, 1, true), coreMaterial);
+    core.position.y = 49;
+    group.add(core);
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(2.8, 8.4, 48),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.68,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.12;
+    group.add(ring);
+
+    this.scene.add(group);
+    this.starlinkEffects.push(group);
   }
 
   detonateDynamite(projectile) {
@@ -869,13 +970,7 @@ export class GameScene {
     this.elements.altitude.textContent = `距离 ${Math.round(distanceXZ(p1, p2))} m`;
     this.elements.weaponState.textContent = `P1 ${Math.round(p1.health)}% 生命 · ${this.energyStatusFor(p1)}`;
     this.elements.comboState.textContent = `P2 ${Math.round(p2.health)}% 生命 · ${this.energyStatusFor(p2)}`;
-    this.elements.systemState.textContent = this.paused
-      ? "暂停"
-      : this.isBoilingKettle(p1)
-        ? "基地烧开水补能"
-        : this.input.pointerLocked
-          ? "鼠标锁定"
-          : "点击画面锁定鼠标";
+    this.elements.systemState.textContent = this.systemStateText(p1);
     this.elements.radioLine.textContent = this.radio;
     this.elements.hitMarker.classList.toggle("hit-marker--active", this.hitTimer > 0);
     this.elements.damageVignette.style.opacity = String(Math.min(0.62, this.damageFlash));
@@ -884,6 +979,24 @@ export class GameScene {
     this.elements.combatLog.innerHTML = this.logs.map((line) => `<span>${line}</span>`).join("");
     this.updateAimHud(p1);
     this.updateRadar();
+  }
+
+  systemStateText(primaryVehicle) {
+    if (this.paused) return "暂停";
+    const baseState = this.isBoilingKettle(primaryVehicle)
+      ? "基地烧开水补能"
+      : this.input.pointerLocked
+        ? "鼠标锁定"
+        : "点击画面锁定鼠标";
+    return `${baseState} · ${this.starlinkStatusText()}`;
+  }
+
+  starlinkStatusText() {
+    if (!this.navigationActive || !this.navigator) return "星链锁止";
+    if (this.navigator.starlinkCooldown > 0) {
+      return `星链 ${Math.ceil(this.navigator.starlinkCooldown)}s`;
+    }
+    return this.starlinkReadyFor(this.navigator) ? "星链待命" : "目标遮挡";
   }
 
   updateAimHud(fallbackVehicle) {
@@ -918,17 +1031,24 @@ export class GameScene {
   updateRadar() {
     const navigator = this.navigator;
     this.elements.radar.classList.toggle("radar--offline", !this.navigationActive);
+    this.elements.radar.classList.toggle("radar--starlink-ready", this.starlinkReadyFor(navigator));
     if (!navigator) {
       this.elements.radarBlips.innerHTML = "";
       return;
     }
 
     const navBase = this.baseOf(navigator);
+    const starlinkReady = this.starlinkReadyFor(navigator);
+    const starlinkTarget = this.enemyOf(navigator);
     const dots = [
       ...this.bases.map((base) => ({ x: base.x, z: base.z, kind: base.ownerId === 1 ? "base-blue" : "base-red" })),
       ...this.vehicles
         .filter((vehicle) => this.hasLineOfSight(navBase, vehicle))
-        .map((vehicle) => ({ x: vehicle.x, z: vehicle.z, kind: vehicle.id === 1 ? "blue" : "red" })),
+        .map((vehicle) => ({
+          x: vehicle.x,
+          z: vehicle.z,
+          kind: starlinkReady && vehicle === starlinkTarget ? "starlink-target" : vehicle.id === 1 ? "blue" : "red",
+        })),
       ...this.projectiles.map((projectile) => ({
         x: projectile.position.x,
         z: projectile.position.z,
@@ -944,6 +1064,13 @@ export class GameScene {
         return `<span class="radar__blip radar__blip--${dot.kind}" style="left:${left}%;top:${top}%"></span>`;
       })
       .join("");
+  }
+
+  starlinkReadyFor(vehicle) {
+    if (!vehicle?.alive || !this.navigationActive || this.navigator !== vehicle || vehicle.starlinkCooldown > 0) return false;
+    const enemy = this.enemyOf(vehicle);
+    const base = this.baseOf(vehicle);
+    return Boolean(enemy?.alive && base && this.hasLineOfSight(base, enemy));
   }
 
   activeNavigator() {
