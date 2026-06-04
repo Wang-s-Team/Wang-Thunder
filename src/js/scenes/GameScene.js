@@ -7,7 +7,7 @@ import {
   makeExplosion,
   makeLabelSprite,
   makeMuzzleFlash,
-  makeTank,
+  makeCombatant,
   makeTracer,
 } from "../core/threeFactories.js";
 
@@ -31,6 +31,7 @@ export class GameScene {
     this.raycaster = new THREE.Raycaster();
     this.aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.pointerNdc = new THREE.Vector2();
+    this.cameraDirection = new THREE.Vector3();
   }
 
   enter(payload = {}) {
@@ -39,8 +40,8 @@ export class GameScene {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x07090d);
     this.scene.fog = new THREE.Fog(0x07090d, 88, 260);
-    this.camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 360);
-    this.camera.position.set(0, 18, 44);
+    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 360);
+    this.camera.position.set(-16, 3.1, 32);
 
     setupLighting(this.scene);
     const battlefield = makeBattlefield();
@@ -109,17 +110,28 @@ export class GameScene {
     this.navigationActive = false;
     this.navigator = null;
     this.navFocus = new THREE.Vector3(-18, 0, 34);
+    this.firstPerson = {
+      yaw: 0,
+      pitch: 0,
+      eyeHeight: 3.05,
+      bob: 0,
+      recoil: 0,
+    };
 
     this.elements.hud.classList.add("hud--active");
+    this.elements.hud.classList.add("hud--first-person");
     this.elements.pause.classList.remove("pause-layer--active");
     this.pushLog(`${this.modeInfo.name} 已启动`);
+    this.pushLog("点击画面锁定鼠标，WASD 移动，鼠标调整方向");
     this.resize(window.innerWidth, window.innerHeight);
     this.updateHud();
   }
 
   exit() {
     this.elements.hud.classList.remove("hud--active");
+    this.elements.hud.classList.remove("hud--first-person");
     this.elements.pause.classList.remove("pause-layer--active");
+    this.input.releasePointerLock?.();
     this.disposeScene();
   }
 
@@ -143,6 +155,7 @@ export class GameScene {
     this.clock += dt;
     this.roundTime = Math.max(0, this.roundTime - dt);
     this.shake = Math.max(0, this.shake - dt * 8);
+    this.firstPerson.recoil = Math.max(0, this.firstPerson.recoil - dt * 5.2);
     this.hitTimer = Math.max(0, this.hitTimer - dt);
     this.damageFlash = Math.max(0, this.damageFlash - dt * 2.2);
     this.waveAlertTimer = Math.max(0, this.waveAlertTimer - dt);
@@ -185,7 +198,7 @@ export class GameScene {
   }
 
   createVehicle({ id, name, controller, color, accent, x, z, heading }) {
-    const group = makeTank({ color, accent });
+    const group = makeCombatant({ color, accent });
     const label = makeLabelSprite(`${id === 1 ? "P1" : "P2"} ${controller === "ai" ? "AI" : "HUM"}`, accent);
     label.position.y = 4.15;
     label.scale.set(4.2, 1.28, 1);
@@ -243,6 +256,11 @@ export class GameScene {
   updateVehicle(vehicle, dt) {
     const enemy = this.enemyOf(vehicle);
     if (!enemy) return;
+    if (vehicle.controller === "human1") {
+      this.updateFirstPersonVehicle(vehicle, enemy, dt);
+      return;
+    }
+
     const axis = vehicle.controller === "ai" ? this.aiAxis(vehicle, enemy) : this.input.axisFor(vehicle.id);
     const aimPoint = this.aimPointFor(vehicle, enemy);
     const length = Math.hypot(axis.x, axis.y) || 1;
@@ -262,6 +280,49 @@ export class GameScene {
 
     const wantsFire = vehicle.controller === "ai" ? this.aiWantsFire(vehicle, enemy) : this.input.wantsFireFor(vehicle.id);
     if (wantsFire) this.fire(vehicle, enemy, aimPoint);
+  }
+
+  updateFirstPersonVehicle(vehicle, enemy, dt) {
+    const mouse = this.input.consumeMouseDelta();
+    const sensitivity = 0.0024;
+    this.firstPerson.yaw = wrapAngle(this.firstPerson.yaw - mouse.x * sensitivity);
+    this.firstPerson.pitch = THREE.MathUtils.clamp(
+      this.firstPerson.pitch - mouse.y * sensitivity,
+      -0.52,
+      0.42,
+    );
+
+    const axis = this.input.axisFor(vehicle.id);
+    const moveLength = Math.hypot(axis.x, axis.y);
+    const forward = forwardFromHeading(this.firstPerson.yaw);
+    const right = rightFromHeading(this.firstPerson.yaw);
+    const move = new THREE.Vector3();
+    if (moveLength > 0) {
+      move.addScaledVector(right, axis.x / moveLength);
+      move.addScaledVector(forward, -axis.y / moveLength);
+    }
+
+    const speed = this.input.isSprinting() ? 25.5 : 18.8;
+    const dx = move.x * speed * dt;
+    const dz = move.z * speed * dt;
+    vehicle.x = THREE.MathUtils.clamp(vehicle.x + dx, -ARENA.x, ARENA.x);
+    vehicle.z = THREE.MathUtils.clamp(vehicle.z + dz, ARENA.zMin, ARENA.zMax);
+    vehicle.velocity.set(dx / Math.max(dt, 0.001), 0, dz / Math.max(dt, 0.001));
+    vehicle.heading = this.firstPerson.yaw;
+    vehicle.aimPoint.copy(this.centerAimPoint(vehicle));
+    vehicle.group.position.set(vehicle.x, 0, vehicle.z);
+    vehicle.group.rotation.y = vehicle.heading;
+    vehicle.group.rotation.z = THREE.MathUtils.clamp(-axis.x * 0.035, -0.05, 0.05);
+
+    if (moveLength > 0) {
+      this.firstPerson.bob += dt * (this.input.isSprinting() ? 12 : 8);
+    } else {
+      this.firstPerson.bob = THREE.MathUtils.lerp(this.firstPerson.bob, 0, Math.min(1, dt * 4));
+    }
+
+    if (this.input.wantsFireFor(vehicle.id)) {
+      this.fireFirstPerson(vehicle, enemy);
+    }
   }
 
   aimPointFor(vehicle, enemy) {
@@ -295,6 +356,34 @@ export class GameScene {
     point.z = THREE.MathUtils.clamp(point.z, ARENA.zMin, ARENA.zMax);
     point.y = 0;
     return point;
+  }
+
+  centerAimPoint(vehicle) {
+    const eye = this.eyePositionFor(vehicle);
+    const direction = this.firstPersonDirection();
+    const groundPoint = new THREE.Vector3();
+    const ray = new THREE.Ray(eye, direction);
+    if (ray.intersectPlane(this.aimPlane, groundPoint)) {
+      groundPoint.x = THREE.MathUtils.clamp(groundPoint.x, -ARENA.x, ARENA.x);
+      groundPoint.z = THREE.MathUtils.clamp(groundPoint.z, ARENA.zMin, ARENA.zMax);
+      groundPoint.y = 0;
+      return groundPoint;
+    }
+    return eye.clone().addScaledVector(direction, 86);
+  }
+
+  firstPersonDirection() {
+    const yaw = this.firstPerson.yaw;
+    const pitch = this.firstPerson.pitch - this.firstPerson.recoil * 0.045;
+    const flat = Math.cos(pitch);
+    return this.cameraDirection
+      .set(-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat)
+      .normalize();
+  }
+
+  eyePositionFor(vehicle) {
+    const forward = forwardFromHeading(this.firstPerson.yaw);
+    return new THREE.Vector3(vehicle.x, this.firstPerson.eyeHeight, vehicle.z).addScaledVector(forward, 0.7);
   }
 
   aiAxis(vehicle, enemy) {
@@ -346,6 +435,40 @@ export class GameScene {
     vehicle.cooldown = vehicle.controller === "ai" ? 0.82 : 0.68;
     this.shake = Math.max(this.shake, 0.35);
     this.audio.beep({ frequency: vehicle.id === 1 ? 610 : 520, duration: 0.045, type: "triangle", gain: 0.025 });
+  }
+
+  fireFirstPerson(vehicle, enemy) {
+    if (vehicle.cooldown > 0 || !vehicle.alive) return;
+    const direction = this.firstPersonDirection();
+    const start = this.eyePositionFor(vehicle).addScaledVector(direction, 1.25);
+    const projectile = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 12, 12),
+      new THREE.MeshBasicMaterial({ color: vehicle.accent }),
+    );
+    projectile.position.copy(start);
+    projectile.userData = {
+      owner: vehicle.id,
+      velocity: direction.clone().multiplyScalar(96),
+      life: 2.05,
+      damage: 22,
+    };
+    this.scene.add(projectile);
+    this.projectiles.push(projectile);
+    this.addTracer(start, start.clone().addScaledVector(direction, 9), vehicle.accent);
+    this.addFlash(start.clone().addScaledVector(direction, 0.4), direction);
+    vehicle.cooldown = 0.6;
+    vehicle.aimPoint.copy(this.centerAimPoint(vehicle));
+    this.firstPerson.recoil = Math.min(1, this.firstPerson.recoil + 0.55);
+    this.shake = Math.max(this.shake, 0.42);
+    this.audio.beep({ frequency: 640, duration: 0.045, type: "triangle", gain: 0.026 });
+  }
+
+  aimQualityForFirstPerson(enemy) {
+    if (!enemy) return 0;
+    const p1 = this.vehicles?.[0];
+    if (!p1) return 0;
+    const toEnemy = new THREE.Vector3(enemy.x - p1.x, 1.2, enemy.z - p1.z).normalize();
+    return this.firstPersonDirection().dot(toEnemy);
   }
 
   updateProjectiles(dt) {
@@ -499,7 +622,8 @@ export class GameScene {
     for (const projectile of this.projectiles) {
       if (projectile.userData.life <= 0) continue;
       const target = this.vehicles.find((vehicle) => vehicle.id !== projectile.userData.owner && vehicle.alive);
-      if (!target || projectile.position.distanceTo(target.group.position) > 2.7) continue;
+      const targetCenter = target?.group.position.clone().add(new THREE.Vector3(0, 1.55, 0));
+      if (!target || projectile.position.distanceTo(targetCenter) > 3.1) continue;
       const owner = this.vehicles.find((vehicle) => vehicle.id === projectile.userData.owner);
       projectile.userData.life = 0;
       target.health = Math.max(0, target.health - projectile.userData.damage);
@@ -531,24 +655,9 @@ export class GameScene {
   }
 
   updateCamera(dt) {
-    if (this.navigationActive && this.navigator) {
-      const pointerPoint = this.input.pointer.moved ? this.pointerWorldPoint() : null;
-      if (pointerPoint) {
-        this.navFocus.lerp(pointerPoint, Math.min(1, dt * 2.6));
-      }
-      const base = this.baseOf(this.navigator);
-      const anchor = base ? new THREE.Vector3(base.x, 0, base.z) : this.navFocus;
-      const distanceFromBase = this.navFocus.distanceTo(anchor);
-      if (distanceFromBase > 82) {
-        this.navFocus.lerp(anchor, Math.min(1, dt * 0.9));
-      }
-      const targetPosition = new THREE.Vector3(
-        this.navFocus.x + (Math.random() - 0.5) * this.shake,
-        76,
-        this.navFocus.z + 24 + (Math.random() - 0.5) * this.shake,
-      );
-      this.camera.position.lerp(targetPosition, Math.min(1, dt * 3.2));
-      this.camera.lookAt(this.navFocus.x, 0, this.navFocus.z - 6);
+    const human = this.vehicles.find((vehicle) => vehicle.controller === "human1" && vehicle.alive);
+    if (human) {
+      this.updateFirstPersonCamera(human);
       return;
     }
 
@@ -567,6 +676,23 @@ export class GameScene {
     this.camera.lookAt(midpoint.x, 2.8, midpoint.z - 1.5);
   }
 
+  updateFirstPersonCamera(vehicle) {
+    const direction = this.firstPersonDirection();
+    const right = rightFromHeading(this.firstPerson.yaw);
+    const bobAmount = vehicle.velocity.length() > 2 ? Math.sin(this.firstPerson.bob) * 0.055 : 0;
+    const shakeOffset = new THREE.Vector3(
+      (Math.random() - 0.5) * this.shake * 0.045,
+      (Math.random() - 0.5) * this.shake * 0.035,
+      (Math.random() - 0.5) * this.shake * 0.045,
+    );
+    const eye = this.eyePositionFor(vehicle)
+      .addScaledVector(right, 0.16)
+      .add(new THREE.Vector3(0, bobAmount, 0))
+      .add(shakeOffset);
+    this.camera.position.copy(eye);
+    this.camera.lookAt(eye.clone().addScaledVector(direction, 12));
+  }
+
   updateHud() {
     const [p1, p2] = this.vehicles;
     const seconds = Math.ceil(this.roundTime);
@@ -577,9 +703,13 @@ export class GameScene {
     this.elements.bearing.textContent = `方位 ${Math.round((p1.heading * 180) / Math.PI + 360) % 360}`;
     this.elements.missionPhase.textContent = this.modeInfo.phase;
     this.elements.altitude.textContent = `距离 ${Math.round(distanceXZ(p1, p2))} m`;
-    this.elements.weaponState.textContent = `P1 ${Math.round(p1.health)}% 装甲 · ${this.baseStatusFor(p1)}`;
-    this.elements.comboState.textContent = `P2 ${Math.round(p2.health)}% 装甲 · ${this.baseStatusFor(p2)}`;
-    this.elements.systemState.textContent = this.paused ? "暂停" : this.navigationActive ? "军用导航 Freecam" : "离开基地：导航离线";
+    this.elements.weaponState.textContent = `P1 ${Math.round(p1.health)}% 生命 · ${this.baseStatusFor(p1)}`;
+    this.elements.comboState.textContent = `P2 ${Math.round(p2.health)}% 生命 · ${this.baseStatusFor(p2)}`;
+    this.elements.systemState.textContent = this.paused
+      ? "暂停"
+      : this.input.pointerLocked
+        ? "鼠标锁定"
+        : "点击画面锁定鼠标";
     this.elements.radioLine.textContent = this.radio;
     this.elements.hitMarker.classList.toggle("hit-marker--active", this.hitTimer > 0);
     this.elements.damageVignette.style.opacity = String(Math.min(0.62, this.damageFlash));
@@ -594,20 +724,18 @@ export class GameScene {
     const aimingVehicle = this.vehicles.find((vehicle) => vehicle.controller === "human1") ?? fallbackVehicle;
     const enemy = this.enemyOf(aimingVehicle);
     if (!aimingVehicle || !enemy) return;
-    const aimPoint = aimingVehicle.aimPoint ?? predictedAimPoint(enemy, 0.12);
-    const screen = this.projectToHud(aimPoint);
+    const firstPersonHuman = aimingVehicle.controller === "human1";
+    const screen = firstPersonHuman ? { left: 50, top: 50 } : this.projectToHud(aimingVehicle.aimPoint ?? predictedAimPoint(enemy, 0.12));
     this.elements.reticle.style.left = `${screen.left}%`;
     this.elements.reticle.style.top = `${screen.top}%`;
     this.elements.targetLock.style.left = `${screen.left}%`;
     this.elements.targetLock.style.top = `${THREE.MathUtils.clamp(screen.top + 8.5, 8, 92)}%`;
 
-    const lockError = distanceXZ(aimPoint, enemy);
-    const locked = lockError < 4.2;
+    const lockError = firstPersonHuman ? 1 - this.aimQualityForFirstPerson(enemy) : distanceXZ(aimingVehicle.aimPoint, enemy);
+    const locked = firstPersonHuman ? lockError < 0.018 : lockError < 4.2;
     this.elements.reticle.classList.toggle("reticle--locked", locked);
     this.elements.targetLock.classList.toggle("target-lock--active", locked);
-    this.elements.targetLock.textContent = locked
-      ? `${enemy.name} · 锁定`
-      : `瞄准 ${Math.round(aimPoint.x)} / ${Math.round(aimPoint.z)}`;
+    this.elements.targetLock.textContent = locked ? `${enemy.name} · 锁定` : `距离 ${Math.round(distanceXZ(aimingVehicle, enemy))} m`;
   }
 
   projectToHud(point) {
@@ -667,13 +795,13 @@ export class GameScene {
     const wasActive = this.navigationActive;
     this.navigationActive = Boolean(navigator);
     this.navigator = navigator;
-    this.elements.hud.classList.toggle("hud--freecam", this.navigationActive);
+    this.elements.hud.classList.toggle("hud--radar-link", this.navigationActive);
     if (navigator && !wasActive) {
       this.navFocus.set(navigator.x, 0, navigator.z);
-      this.pushLog(`${navigator.name} 接入军用导航 Freecam`);
+      this.pushLog(`${navigator.name} 接入基地雷达链路`);
     }
     if (!navigator && wasActive) {
-      this.pushLog("军用导航断开：载具离开基地");
+      this.pushLog("基地雷达链路断开");
     }
     if (!navigator) return;
     const base = this.baseOf(navigator);
@@ -816,6 +944,10 @@ function forwardFromHeading(heading) {
   return new THREE.Vector3(-Math.sin(heading), 0, -Math.cos(heading)).normalize();
 }
 
+function rightFromHeading(heading) {
+  return new THREE.Vector3(Math.cos(heading), 0, -Math.sin(heading)).normalize();
+}
+
 function angleToTarget(source, target) {
   return Math.atan2(-(target.x - source.x), -(target.z - source.z));
 }
@@ -823,6 +955,10 @@ function angleToTarget(source, target) {
 function lerpAngle(current, target, amount) {
   const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
   return current + delta * amount;
+}
+
+function wrapAngle(angle) {
+  return Math.atan2(Math.sin(angle), Math.cos(angle));
 }
 
 function distanceXZ(a, b) {

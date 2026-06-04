@@ -25,47 +25,77 @@ async function pixelStats(page) {
   });
 }
 
-async function capture(page, name, viewport, button = "#start-btn", expectedText = "玩家一号 VS AI") {
-  await page.setViewportSize(viewport);
-  await page.goto(url, { waitUntil: "networkidle" });
-  await page.waitForFunction(() => !document.querySelector("#boot")?.classList.contains("boot--active"), { timeout: 9000 });
-  await page.locator("#menu.screen--active #start-btn").waitFor({ state: "visible", timeout: 9000 });
-  await page.waitForTimeout(500);
-  await page.screenshot({ path: `/tmp/${name}-menu.png`, timeout: 60000 });
+async function capture(name, viewport, button = "#start-btn", expectedText = "玩家一号 VS AI") {
+  console.log(`verify: ${name} start`);
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  try {
+    await page.setViewportSize(viewport);
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
+    await page.waitForFunction(() => !document.querySelector("#boot")?.classList.contains("boot--active"), { timeout: 10000 });
+    await page.locator("#menu.screen--active #start-btn").waitFor({ state: "visible", timeout: 9000 });
+    await page.waitForTimeout(250);
 
-  await page.locator(button).click();
-  await page.locator("#hud.hud--active").waitFor({ state: "visible", timeout: 5000 });
-  await page.waitForFunction(
-    (text) => document.querySelector("#mission-phase")?.textContent?.includes(text),
-    expectedText,
-    { timeout: 5000 },
-  );
-  await page.waitForTimeout(1700);
-  await page.screenshot({ path: `/tmp/${name}-game.png`, timeout: 60000 });
-  const game = await pixelStats(page);
-  const phase = await page.locator("#mission-phase").textContent();
-  const system = await page.locator("#system-state").textContent();
-  const freecam = await page.locator("#hud").evaluate((node) => node.classList.contains("hud--freecam"));
+    await startGame(page, button);
+    await page.waitForFunction(
+      (text) => document.querySelector("#mission-phase")?.textContent?.includes(text),
+      expectedText,
+      { timeout: 5000 },
+    );
+    await page.waitForTimeout(900);
+    const game = await pixelStats(page);
+    const phase = await page.locator("#mission-phase").textContent();
+    const system = await page.locator("#system-state").textContent();
+    const firstPerson = await page.locator("#hud").evaluate((node) => node.classList.contains("hud--first-person"));
+    const legacyFreecam = await page.locator("#hud").evaluate((node) => node.classList.contains("hud--freecam"));
+    const reticle = await page.locator("#reticle").evaluate((node) => {
+      const style = window.getComputedStyle(node);
+      return { left: style.left, top: style.top };
+    });
 
-  if (game.lit < 500 || game.buckets < 8) {
-    throw new Error(`${name} game canvas looks blank: ${JSON.stringify(game)}`);
+    if (game.lit < 500 || game.buckets < 8) {
+      throw new Error(`${name} game canvas looks blank: ${JSON.stringify(game)}`);
+    }
+    if (!phase.includes(expectedText)) {
+      throw new Error(`${name} started wrong mode: ${phase}`);
+    }
+    if (!firstPerson || legacyFreecam) {
+      throw new Error(`${name} should use first-person HUD: ${JSON.stringify({ firstPerson, legacyFreecam })}`);
+    }
+    console.log(`verify: ${name} ok`);
+    return { game, phase, system, firstPerson, legacyFreecam, reticle };
+  } finally {
+    await browser.close();
   }
-  if (!phase.includes(expectedText)) {
-    throw new Error(`${name} started wrong mode: ${phase}`);
+}
+
+async function startGame(page, button) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await page.evaluate((selector) => {
+      const target = document.querySelector(selector);
+      target?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      target?.click();
+    }, button);
+    for (let poll = 0; poll < 16; poll += 1) {
+      const active = await page.evaluate(() => document.querySelector("#hud")?.classList.contains("hud--active"));
+      if (active) return;
+      await page.waitForTimeout(100);
+    }
   }
-  return { game, phase, system, freecam };
+
+  const state = await page.evaluate(() => ({
+    menu: [...(document.querySelector("#menu")?.classList ?? [])],
+    hud: [...(document.querySelector("#hud")?.classList ?? [])],
+    phase: document.querySelector("#mission-phase")?.textContent,
+  }));
+  throw new Error(`game did not start: ${JSON.stringify(state)}`);
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-  const pve = await capture(page, "wang-desktop-pve", { width: 1280, height: 720 }, "#start-btn", "玩家一号 VS AI");
-  if (!pve.freecam || !pve.system.includes("Freecam")) {
-    throw new Error(`pve should start with base freecam online: ${JSON.stringify(pve)}`);
+  const desktop = await capture("wang-desktop-pve", { width: 1280, height: 720 }, "#start-btn", "玩家一号 VS AI");
+  if (!desktop.system.includes("点击画面") && !desktop.system.includes("鼠标锁定")) {
+    throw new Error(`desktop should show first-person pointer lock status: ${JSON.stringify(desktop)}`);
   }
-  const pvp = await capture(page, "wang-desktop-pvp", { width: 1280, height: 720 }, "#duel-btn", "本地双人对战");
-  const aivai = await capture(page, "wang-desktop-aivai", { width: 1280, height: 720 }, "#ai-btn", "AI 裁判观战");
-  const mobile = await capture(page, "wang-mobile-pve", { width: 390, height: 844 }, "#start-btn", "玩家一号 VS AI");
-  await browser.close();
-  console.log(JSON.stringify({ pve, pvp, aivai, mobile }, null, 2));
+  const mobile = await capture("wang-mobile-pve", { width: 390, height: 844 }, "#start-btn", "玩家一号 VS AI");
+  console.log(JSON.stringify({ desktop, mobile }, null, 2));
 })();

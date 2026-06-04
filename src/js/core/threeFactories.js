@@ -1,165 +1,168 @@
 import * as THREE from "../../vendor/three.module.js";
 
-export function makeTank(options = {}) {
+export function makeCombatant(options = {}) {
   const group = new THREE.Group();
-  group.name = "CopperPlate MBT";
+  group.name = "Infantry Combatant";
 
   const baseColor = options.color ?? 0x2f3b32;
   const accent = options.accent ?? 0xffd166;
-  const hullMaterial = new THREE.MeshStandardMaterial({
+  const uniformMaterial = new THREE.MeshStandardMaterial({
     color: baseColor,
-    map: makeArmorTexture(`armor-${baseColor}`, baseColor, accent),
-    roughness: 0.66,
-    metalness: 0.3,
+    map: makeArmorTexture(`uniform-${baseColor}`, baseColor, accent),
+    roughness: 0.78,
+    metalness: 0.08,
   });
-  const darkMaterial = new THREE.MeshStandardMaterial({
-    color: 0x111716,
-    map: makeArmorTexture("track-rubber", 0x151917, 0x3d4a43),
-    roughness: 0.9,
-    metalness: 0.14,
-  });
-  const metalMaterial = new THREE.MeshStandardMaterial({ color: 0x3f4744, roughness: 0.58, metalness: 0.42 });
-  const glassMaterial = new THREE.MeshStandardMaterial({
-    color: 0x0d1719,
+  const armorMaterial = new THREE.MeshStandardMaterial({ color: 0x1a211f, roughness: 0.72, metalness: 0.18 });
+  const bootMaterial = new THREE.MeshStandardMaterial({ color: 0x101413, roughness: 0.88, metalness: 0.08 });
+  const metalMaterial = new THREE.MeshStandardMaterial({ color: 0x3f4744, roughness: 0.56, metalness: 0.42 });
+  const skinMaterial = new THREE.MeshStandardMaterial({ color: 0xc58b66, roughness: 0.64, metalness: 0.02 });
+  const visorMaterial = new THREE.MeshStandardMaterial({
+    color: 0x0c171a,
     emissive: accent,
-    emissiveIntensity: 0.18,
+    emissiveIntensity: 0.2,
     roughness: 0.22,
     metalness: 0.05,
   });
   const glowMaterial = new THREE.MeshBasicMaterial({ color: accent });
 
-  const lowerHull = new THREE.Mesh(new THREE.BoxGeometry(5.35, 0.72, 6.55), darkMaterial);
-  lowerHull.position.y = 0.74;
-  lowerHull.castShadow = true;
-  lowerHull.receiveShadow = true;
-  group.add(lowerHull);
+  const leftBoot = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.24, 0.62), bootMaterial);
+  leftBoot.position.set(-0.28, 0.12, -0.02);
+  leftBoot.castShadow = true;
+  leftBoot.receiveShadow = true;
+  group.add(leftBoot);
 
-  const hull = new THREE.Mesh(new THREE.BoxGeometry(4.95, 1.08, 5.95), hullMaterial);
-  hull.position.y = 1.05;
-  hull.castShadow = true;
-  hull.receiveShadow = true;
-  group.add(hull);
+  const rightBoot = leftBoot.clone();
+  rightBoot.position.x = 0.28;
+  group.add(rightBoot);
 
-  const glacis = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.34, 1.18), hullMaterial);
-  glacis.position.set(0, 1.55, -2.62);
-  glacis.rotation.x = -0.24;
-  glacis.castShadow = true;
-  group.add(glacis);
+  for (const side of [-1, 1]) {
+    const x = side * 0.26;
+    addLimb(group, new THREE.Vector3(x, 0.26, 0.02), new THREE.Vector3(x, 1.08, 0.02), 0.13, uniformMaterial);
+    addLimb(group, new THREE.Vector3(x, 1.08, 0.02), new THREE.Vector3(side * 0.18, 1.86, -0.04), 0.17, uniformMaterial);
 
-  const engineDeck = new THREE.Mesh(new THREE.BoxGeometry(4.35, 0.16, 1.38), metalMaterial);
-  engineDeck.position.set(0, 1.66, 2.18);
-  engineDeck.castShadow = true;
-  group.add(engineDeck);
-
-  for (let i = 0; i < 5; i += 1) {
-    const vent = new THREE.Mesh(new THREE.BoxGeometry(3.55, 0.05, 0.11), darkMaterial);
-    vent.position.set(0, 1.77, 1.65 + i * 0.23);
-    vent.castShadow = true;
-    group.add(vent);
+    const knee = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 8), armorMaterial);
+    knee.position.set(x, 1.08, -0.02);
+    knee.castShadow = true;
+    group.add(knee);
   }
 
-  const turret = new THREE.Mesh(new THREE.BoxGeometry(3.25, 1.04, 2.72), hullMaterial);
-  turret.position.set(0, 2.18, -0.48);
-  turret.castShadow = true;
-  group.add(turret);
+  const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.36, 0.5), armorMaterial);
+  pelvis.position.set(0, 1.92, -0.02);
+  pelvis.castShadow = true;
+  group.add(pelvis);
 
-  const turretFront = new THREE.Mesh(new THREE.BoxGeometry(2.72, 0.62, 0.48), metalMaterial);
-  turretFront.position.set(0, 2.22, -1.97);
-  turretFront.castShadow = true;
-  group.add(turretFront);
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.68, 1.24, 8), uniformMaterial);
+  torso.position.set(0, 2.5, -0.02);
+  torso.scale.z = 0.72;
+  torso.castShadow = true;
+  torso.receiveShadow = true;
+  group.add(torso);
 
-  const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.58, 0.18, 22), metalMaterial);
-  hatch.position.set(-0.78, 2.82, -0.35);
-  hatch.castShadow = true;
-  group.add(hatch);
+  const vest = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.94, 0.46), armorMaterial);
+  vest.position.set(0, 2.48, -0.24);
+  vest.castShadow = true;
+  group.add(vest);
 
-  const optic = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.22, 0.62), glassMaterial);
-  optic.position.set(0.9, 2.79, -1.02);
-  group.add(optic);
+  const chestLight = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.08, 0.04), glowMaterial);
+  chestLight.position.set(0, 2.78, -0.49);
+  group.add(chestLight);
 
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.23, 7.35, 22), darkMaterial);
-  barrel.position.set(0, 2.24, -4.5);
-  barrel.rotation.x = Math.PI / 2;
-  barrel.castShadow = true;
-  group.add(barrel);
+  const backpack = new THREE.Mesh(new THREE.BoxGeometry(0.74, 1.02, 0.34), armorMaterial);
+  backpack.position.set(0, 2.48, 0.38);
+  backpack.castShadow = true;
+  group.add(backpack);
 
-  const muzzleBrake = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.28, 0.42), metalMaterial);
-  muzzleBrake.position.set(0, 2.24, -8.18);
-  muzzleBrake.castShadow = true;
-  group.add(muzzleBrake);
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.22, 14), skinMaterial);
+  neck.position.set(0, 3.16, -0.04);
+  neck.castShadow = true;
+  group.add(neck);
 
-  const muzzleSlot = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.08, 0.52), darkMaterial);
-  muzzleSlot.position.set(0, 2.24, -8.18);
-  group.add(muzzleSlot);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 22, 16), skinMaterial);
+  head.position.set(0, 3.48, -0.08);
+  head.castShadow = true;
+  group.add(head);
 
-  for (const x of [-2.65, 2.65]) {
-    const track = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.78, 6.78), darkMaterial);
-    track.position.set(x, 0.62, 0);
-    track.castShadow = true;
-    track.receiveShadow = true;
-    group.add(track);
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.39, 22, 12), uniformMaterial);
+  helmet.position.set(0, 3.65, -0.06);
+  helmet.scale.y = 0.52;
+  helmet.castShadow = true;
+  group.add(helmet);
 
-    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.52, 5.82), hullMaterial);
-    skirt.position.set(x * 0.88, 1.14, -0.04);
-    skirt.castShadow = true;
-    group.add(skirt);
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.1, 0.06), visorMaterial);
+  visor.position.set(0, 3.5, -0.39);
+  group.add(visor);
 
-    for (let i = 0; i < 7; i += 1) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.18, 20), metalMaterial);
-      wheel.position.set(x, 0.58, -2.72 + i * 0.9);
-      wheel.rotation.z = Math.PI / 2;
-      wheel.castShadow = true;
-      group.add(wheel);
+  const helmetBand = new THREE.Mesh(new THREE.CylinderGeometry(0.41, 0.41, 0.08, 22), armorMaterial);
+  helmetBand.position.set(0, 3.54, -0.06);
+  helmetBand.scale.z = 0.76;
+  helmetBand.castShadow = true;
+  group.add(helmetBand);
 
-      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.2, 14), glowMaterial);
-      hub.position.copy(wheel.position);
-      hub.rotation.z = Math.PI / 2;
-      group.add(hub);
-    }
+  const leftShoulder = new THREE.Vector3(-0.58, 2.94, -0.1);
+  const rightShoulder = new THREE.Vector3(0.58, 2.94, -0.1);
+  const leftElbow = new THREE.Vector3(-0.36, 2.48, -0.72);
+  const rightElbow = new THREE.Vector3(0.36, 2.48, -0.72);
+  const leftHand = new THREE.Vector3(-0.16, 2.36, -1.32);
+  const rightHand = new THREE.Vector3(0.16, 2.36, -1.32);
+  addLimb(group, leftShoulder, leftElbow, 0.13, uniformMaterial);
+  addLimb(group, rightShoulder, rightElbow, 0.13, uniformMaterial);
+  addLimb(group, leftElbow, leftHand, 0.11, uniformMaterial);
+  addLimb(group, rightElbow, rightHand, 0.11, uniformMaterial);
 
-    for (let i = 0; i < 10; i += 1) {
-      const tread = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.12, 0.34), metalMaterial);
-      tread.position.set(x, 1.05, -3.04 + i * 0.68);
-      tread.castShadow = true;
-      group.add(tread);
-    }
+  for (const handPosition of [leftHand, rightHand]) {
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), skinMaterial);
+    hand.position.copy(handPosition);
+    hand.castShadow = true;
+    group.add(hand);
   }
 
-  const marker = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.08, 0.65), glowMaterial);
-  marker.position.set(0, 2.72, -1.58);
-  group.add(marker);
+  const rifleBody = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.18, 0.98), metalMaterial);
+  rifleBody.position.set(0, 2.36, -1.26);
+  rifleBody.castShadow = true;
+  group.add(rifleBody);
 
-  for (const x of [-1.95, 1.95]) {
-    const headlight = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), glowMaterial);
-    headlight.position.set(x, 1.42, -3.1);
-    group.add(headlight);
-  }
+  const rifleBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.5, 12), metalMaterial);
+  rifleBarrel.position.set(0, 2.38, -2.12);
+  rifleBarrel.rotation.x = Math.PI / 2;
+  rifleBarrel.castShadow = true;
+  group.add(rifleBarrel);
 
-  for (const x of [-1.2, 1.2]) {
-    const exhaust = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.24, 0.2), darkMaterial);
-    exhaust.position.set(x, 1.05, 3.12);
-    group.add(exhaust);
-  }
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.18, 0.42), armorMaterial);
+  stock.position.set(0, 2.36, -0.66);
+  stock.castShadow = true;
+  group.add(stock);
 
-  for (let i = 0; i < 8; i += 1) {
-    for (const x of [-2.24, 2.24]) {
-      const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.06, 8), metalMaterial);
-      bolt.position.set(x, 1.52, -2.35 + i * 0.64);
-      bolt.rotation.z = Math.PI / 2;
-      group.add(bolt);
-    }
-  }
+  const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), glowMaterial);
+  muzzle.position.set(0, 2.38, -2.9);
+  group.add(muzzle);
 
-  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 2.4, 8), darkMaterial);
-  antenna.position.set(1.22, 3.58, 0.72);
-  antenna.rotation.x = 0.14;
+  const armband = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16, 0.04), glowMaterial);
+  armband.position.set(0.55, 2.56, -0.48);
+  armband.rotation.z = -0.42;
+  group.add(armband);
+
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.024, 1.35, 8), metalMaterial);
+  antenna.position.set(0.38, 3.08, 0.52);
+  antenna.rotation.x = 0.2;
   group.add(antenna);
 
-  const antennaTip = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), glowMaterial);
-  antennaTip.position.set(1.22, 4.82, 0.9);
+  const antennaTip = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), glowMaterial);
+  antennaTip.position.set(0.38, 3.78, 0.66);
   group.add(antennaTip);
 
   return group;
+}
+
+function addLimb(group, start, end, radius, material) {
+  const direction = end.clone().sub(start);
+  const length = direction.length();
+  const limb = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.88, radius, length, 14), material);
+  limb.position.copy(start).add(end).multiplyScalar(0.5);
+  limb.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+  limb.castShadow = true;
+  limb.receiveShadow = true;
+  group.add(limb);
+  return limb;
 }
 
 export function makeBattlefield() {
