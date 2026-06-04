@@ -21,7 +21,13 @@ const ENERGY_RECHARGE_PER_SECOND = 34;
 const ENERGY_MOVE_PER_SECOND = 8.5;
 const ENERGY_SPRINT_EXTRA_PER_SECOND = 5;
 const ENERGY_SHOT_COST = 16;
+const ENERGY_DYNAMITE_COST = 38;
 const ENERGY_CIWS_ROUND_COST = 0.06;
+const DYNAMITE_RADIUS = 10.5;
+const DYNAMITE_DAMAGE = 18;
+const DYNAMITE_KNOCKBACK = 50;
+const DYNAMITE_LIFT = 13;
+const BLAST_GRAVITY = 34;
 const MODES = {
   pve: { name: "人机对战", controllers: ["human1", "ai"], phase: "玩家一号 VS AI" },
   pvp: { name: "本地双人", controllers: ["human1", "human2"], phase: "本地双人对战" },
@@ -128,7 +134,7 @@ export class GameScene {
     this.elements.hud.classList.add("hud--first-person");
     this.elements.pause.classList.remove("pause-layer--active");
     this.pushLog(`${this.modeInfo.name} 已启动`);
-    this.pushLog("点击画面锁定鼠标，WASD 移动，鼠标调整方向");
+    this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 发射雷管");
     this.resize(window.innerWidth, window.innerHeight);
     this.updateHud();
   }
@@ -231,6 +237,9 @@ export class GameScene {
       alive: true,
       group,
       velocity: new THREE.Vector3(),
+      blastVelocity: new THREE.Vector3(),
+      verticalVelocity: 0,
+      air: 0,
       aimPoint: new THREE.Vector3(x, 0, z),
       ai: {
         strafe: id === 1 ? 1 : -1,
@@ -288,12 +297,20 @@ export class GameScene {
     vehicle.aimPoint.copy(aimPoint);
     const aim = angleToTarget(vehicle, aimPoint);
     vehicle.heading = lerpAngle(vehicle.heading, aim, Math.min(1, dt * 4.2));
-    vehicle.group.position.set(vehicle.x, 0, vehicle.z);
+    this.applyBlastMotion(vehicle, dt);
+    vehicle.group.position.set(vehicle.x, vehicle.air, vehicle.z);
     vehicle.group.rotation.y = vehicle.heading;
-    vehicle.group.rotation.z = THREE.MathUtils.clamp(-axis.x * 0.035, -0.05, 0.05);
+    vehicle.group.rotation.x = THREE.MathUtils.clamp(-vehicle.blastVelocity.z * 0.006, -0.22, 0.22);
+    vehicle.group.rotation.z = THREE.MathUtils.clamp(-axis.x * 0.035 + vehicle.blastVelocity.x * 0.005, -0.18, 0.18);
 
+    const wantsDynamite =
+      vehicle.controller === "ai" ? this.aiWantsDynamite(vehicle, enemy) : this.input.wantsDynamiteFor(vehicle.id);
     const wantsFire = vehicle.controller === "ai" ? this.aiWantsFire(vehicle, enemy) : this.input.wantsFireFor(vehicle.id);
-    if (wantsFire) this.fire(vehicle, enemy, aimPoint);
+    if (wantsDynamite) {
+      this.fireDynamite(vehicle, predictedAimPoint(enemy, 0.42));
+    } else if (wantsFire) {
+      this.fire(vehicle, enemy, aimPoint);
+    }
   }
 
   updateFirstPersonVehicle(vehicle, enemy, dt) {
@@ -326,9 +343,11 @@ export class GameScene {
     vehicle.velocity.set(dx / Math.max(dt, 0.001), 0, dz / Math.max(dt, 0.001));
     vehicle.heading = this.firstPerson.yaw;
     vehicle.aimPoint.copy(this.centerAimPoint(vehicle));
-    vehicle.group.position.set(vehicle.x, 0, vehicle.z);
+    this.applyBlastMotion(vehicle, dt);
+    vehicle.group.position.set(vehicle.x, vehicle.air, vehicle.z);
     vehicle.group.rotation.y = vehicle.heading;
-    vehicle.group.rotation.z = THREE.MathUtils.clamp(-axis.x * 0.035, -0.05, 0.05);
+    vehicle.group.rotation.x = THREE.MathUtils.clamp(-vehicle.blastVelocity.z * 0.006, -0.22, 0.22);
+    vehicle.group.rotation.z = THREE.MathUtils.clamp(-axis.x * 0.035 + vehicle.blastVelocity.x * 0.005, -0.18, 0.18);
 
     if (moveLength > 0 && canMove) {
       this.firstPerson.bob += dt * (this.input.isSprinting() ? 12 : 8);
@@ -336,7 +355,9 @@ export class GameScene {
       this.firstPerson.bob = THREE.MathUtils.lerp(this.firstPerson.bob, 0, Math.min(1, dt * 4));
     }
 
-    if (this.input.wantsFireFor(vehicle.id)) {
+    if (this.input.wantsDynamiteFor(vehicle.id)) {
+      this.fireDynamiteFirstPerson(vehicle);
+    } else if (this.input.wantsFireFor(vehicle.id)) {
       this.fireFirstPerson(vehicle, enemy);
     }
   }
@@ -399,7 +420,7 @@ export class GameScene {
 
   eyePositionFor(vehicle) {
     const forward = forwardFromHeading(this.firstPerson.yaw);
-    return new THREE.Vector3(vehicle.x, this.firstPerson.eyeHeight, vehicle.z).addScaledVector(forward, 0.7);
+    return new THREE.Vector3(vehicle.x, this.firstPerson.eyeHeight + vehicle.air, vehicle.z).addScaledVector(forward, 0.7);
   }
 
   aiAxis(vehicle, enemy) {
@@ -433,6 +454,15 @@ export class GameScene {
     const toEnemy = new THREE.Vector3(enemy.x - vehicle.x, 0, enemy.z - vehicle.z).normalize();
     const aimQuality = facing.dot(toEnemy);
     return distance < 116 && aimQuality > 0.78 && Math.random() < vehicle.ai.fireBias;
+  }
+
+  aiWantsDynamite(vehicle, enemy) {
+    if (vehicle.cooldown > 0 || vehicle.energy < ENERGY_DYNAMITE_COST) return false;
+    const distance = distanceXZ(vehicle, enemy);
+    if (distance < 18 || distance > 78) return false;
+    const facing = forwardFromHeading(vehicle.heading);
+    const toEnemy = new THREE.Vector3(enemy.x - vehicle.x, 0, enemy.z - vehicle.z).normalize();
+    return facing.dot(toEnemy) > 0.86 && Math.random() < 0.18;
   }
 
   fire(vehicle, enemy, aimPoint = predictedAimPoint(enemy, 0.16)) {
@@ -491,6 +521,51 @@ export class GameScene {
     this.audio.beep({ frequency: 640, duration: 0.045, type: "triangle", gain: 0.026 });
   }
 
+  fireDynamite(vehicle, aimPoint) {
+    if (vehicle.cooldown > 0 || !vehicle.alive) return;
+    const flatAim = new THREE.Vector3(aimPoint.x - vehicle.x, 0, aimPoint.z - vehicle.z);
+    if (flatAim.lengthSq() < 0.5) return;
+    if (!this.trySpendDynamiteEnergy(vehicle)) return;
+    const direction = flatAim.normalize();
+    const start = new THREE.Vector3(vehicle.x, 2.35 + vehicle.air, vehicle.z).addScaledVector(direction, 3.2);
+    const target = new THREE.Vector3(aimPoint.x, 1.9, aimPoint.z);
+    const shotDirection = target.sub(start).normalize();
+    this.launchDynamite(vehicle, start, shotDirection, 46);
+    vehicle.cooldown = vehicle.controller === "ai" ? 1.9 : 1.55;
+    this.shake = Math.max(this.shake, 0.5);
+  }
+
+  fireDynamiteFirstPerson(vehicle) {
+    if (vehicle.cooldown > 0 || !vehicle.alive) return;
+    if (!this.trySpendDynamiteEnergy(vehicle)) return;
+    const direction = this.firstPersonDirection();
+    const start = this.eyePositionFor(vehicle).addScaledVector(direction, 1.1);
+    this.launchDynamite(vehicle, start, direction, 52);
+    vehicle.cooldown = 1.45;
+    vehicle.aimPoint.copy(this.centerAimPoint(vehicle));
+    this.firstPerson.recoil = Math.min(1, this.firstPerson.recoil + 0.82);
+    this.shake = Math.max(this.shake, 0.55);
+  }
+
+  launchDynamite(vehicle, start, direction, speed) {
+    const projectile = makeDynamiteProjectile(vehicle.accent);
+    projectile.position.copy(start);
+    projectile.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction.clone().normalize());
+    projectile.userData = {
+      owner: vehicle.id,
+      velocity: direction.clone().multiplyScalar(speed),
+      life: 1.65,
+      damage: DYNAMITE_DAMAGE,
+      dynamite: true,
+      detonated: false,
+    };
+    this.scene.add(projectile);
+    this.projectiles.push(projectile);
+    this.addTracer(start, start.clone().addScaledVector(direction, 6), vehicle.accent);
+    this.addFlash(start.clone().addScaledVector(direction, 0.35), direction);
+    this.audio.beep({ frequency: vehicle.id === 1 ? 310 : 280, duration: 0.09, type: "sawtooth", gain: 0.034 });
+  }
+
   aimQualityForFirstPerson(enemy) {
     if (!enemy) return 0;
     const p1 = this.vehicles?.[0];
@@ -503,6 +578,13 @@ export class GameScene {
     for (const projectile of this.projectiles) {
       projectile.position.addScaledVector(projectile.userData.velocity, dt);
       projectile.userData.life -= dt;
+      if (projectile.userData.dynamite) {
+        projectile.rotation.z += dt * 11;
+        projectile.rotation.x += dt * 3.5;
+        if (projectile.userData.life <= 0) {
+          this.detonateDynamite(projectile);
+        }
+      }
     }
     const removed = this.projectiles.filter(
       (projectile) =>
@@ -656,6 +738,10 @@ export class GameScene {
       const target = this.vehicles.find((vehicle) => vehicle.id !== projectile.userData.owner && vehicle.alive);
       const targetCenter = target?.group.position.clone().add(new THREE.Vector3(0, 1.55, 0));
       if (!target || projectile.position.distanceTo(targetCenter) > 3.1) continue;
+      if (projectile.userData.dynamite) {
+        this.detonateDynamite(projectile);
+        continue;
+      }
       const owner = this.vehicles.find((vehicle) => vehicle.id === projectile.userData.owner);
       projectile.userData.life = 0;
       target.health = Math.max(0, target.health - projectile.userData.damage);
@@ -679,6 +765,52 @@ export class GameScene {
       if (!projectile.userData.ciws) {
         this.audio.beep({ frequency: 220, duration: 0.08, type: "square", gain: 0.04 });
       }
+      if (target.health <= 0) {
+        target.alive = false;
+        this.finishRound(owner, "KNOCKOUT");
+      }
+    }
+  }
+
+  detonateDynamite(projectile) {
+    if (projectile.userData.detonated) return;
+    projectile.userData.detonated = true;
+    projectile.userData.life = 0;
+    const owner = this.vehicles.find((vehicle) => vehicle.id === projectile.userData.owner);
+    const color = owner?.accent ?? 0xffd166;
+    this.addExplosion(projectile.position.clone(), color, 42);
+    this.shake = Math.max(this.shake, 1.8);
+    this.hitTimer = Math.max(this.hitTimer, 0.35);
+    this.audio.beep({ frequency: 155, duration: 0.12, type: "square", gain: 0.058 });
+
+    if (!owner) return;
+    for (const target of this.vehicles) {
+      if (target.id === owner.id || !target.alive) continue;
+      const distance = distanceXZ(projectile.position, target);
+      if (distance > DYNAMITE_RADIUS) continue;
+      const falloff = 1 - distance / DYNAMITE_RADIUS;
+      const damage = DYNAMITE_DAMAGE * (0.35 + falloff * 0.65);
+      target.health = Math.max(0, target.health - damage);
+      target.invincible = 0.45;
+      owner.hits += 1;
+      owner.score += damage * 14;
+      this.damageFlash = Math.max(
+        this.damageFlash,
+        target.controller.startsWith("human") ? 0.85 : 0.34,
+      );
+
+      const blastDirection = new THREE.Vector3(target.x - projectile.position.x, 0, target.z - projectile.position.z);
+      if (blastDirection.lengthSq() < 0.01) {
+        blastDirection.copy(new THREE.Vector3(target.x - owner.x, 0, target.z - owner.z));
+      }
+      if (blastDirection.lengthSq() < 0.01) blastDirection.set(owner.id === 1 ? 1 : -1, 0, 0);
+      blastDirection.normalize();
+      const impulse = DYNAMITE_KNOCKBACK * (0.42 + falloff * 0.58);
+      target.blastVelocity.addScaledVector(blastDirection, impulse);
+      target.verticalVelocity = Math.max(target.verticalVelocity, DYNAMITE_LIFT * (0.45 + falloff * 0.75));
+      target.air = Math.max(target.air, 0.08);
+      this.pushLog(`${owner.name} 雷管炸飞 ${target.name}`);
+
       if (target.health <= 0) {
         target.alive = false;
         this.finishRound(owner, "KNOCKOUT");
@@ -880,6 +1012,10 @@ export class GameScene {
     return this.spendEnergy(vehicle, ENERGY_SHOT_COST, `${vehicle.name} 能量不足，回基地烧开水后才能开枪`);
   }
 
+  trySpendDynamiteEnergy(vehicle) {
+    return this.spendEnergy(vehicle, ENERGY_DYNAMITE_COST, `${vehicle.name} 能量不足，回基地烧开水后才能发射雷管`);
+  }
+
   spendEnergy(vehicle, amount, message) {
     if (vehicle.energy < amount) {
       vehicle.energy = Math.max(0, vehicle.energy);
@@ -906,6 +1042,26 @@ export class GameScene {
       }
     }
     return true;
+  }
+
+  applyBlastMotion(vehicle, dt) {
+    if (vehicle.blastVelocity.lengthSq() > 0.01) {
+      vehicle.x = THREE.MathUtils.clamp(vehicle.x + vehicle.blastVelocity.x * dt, -ARENA.x, ARENA.x);
+      vehicle.z = THREE.MathUtils.clamp(vehicle.z + vehicle.blastVelocity.z * dt, ARENA.zMin, ARENA.zMax);
+      vehicle.velocity.add(vehicle.blastVelocity);
+      vehicle.blastVelocity.multiplyScalar(Math.pow(0.08, dt));
+    } else {
+      vehicle.blastVelocity.set(0, 0, 0);
+    }
+
+    if (vehicle.air > 0 || vehicle.verticalVelocity > 0) {
+      vehicle.verticalVelocity -= BLAST_GRAVITY * dt;
+      vehicle.air = Math.max(0, vehicle.air + vehicle.verticalVelocity * dt);
+      if (vehicle.air <= 0) {
+        vehicle.air = 0;
+        vehicle.verticalVelocity = 0;
+      }
+    }
   }
 
   addTrackDust() {
@@ -984,6 +1140,41 @@ export class GameScene {
       }
     });
   }
+}
+
+function makeDynamiteProjectile(accent) {
+  const group = new THREE.Group();
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: 0x7a1f22,
+    roughness: 0.58,
+    metalness: 0.08,
+  });
+  const bandMaterial = new THREE.MeshStandardMaterial({
+    color: 0x1c2022,
+    roughness: 0.42,
+    metalness: 0.42,
+  });
+  const fuseMaterial = new THREE.MeshBasicMaterial({ color: accent });
+
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.9, 14), bodyMaterial);
+  body.rotation.x = Math.PI / 2;
+  group.add(body);
+
+  for (const z of [-0.28, 0.28]) {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.255, 0.255, 0.08, 14), bandMaterial);
+    band.position.z = z;
+    band.rotation.x = Math.PI / 2;
+    group.add(band);
+  }
+
+  const fuse = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 8), fuseMaterial);
+  fuse.position.z = -0.52;
+  group.add(fuse);
+
+  const spark = new THREE.PointLight(accent, 0.9, 8);
+  spark.position.z = -0.55;
+  group.add(spark);
+  return group;
 }
 
 function setupLighting(scene) {
