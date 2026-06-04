@@ -2,7 +2,14 @@ export class Input {
   constructor(canvas) {
     this.canvas = canvas;
     this.keys = new Set();
-    this.pointer = { x: window.innerWidth / 2, y: window.innerHeight / 2, down: false, firePulse: false, moved: false };
+    this.pointer = {
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+      down: false,
+      firePulse: false,
+      dynamitePulse: false,
+      moved: false,
+    };
     this.mouseDelta = { x: 0, y: 0 };
     this.shiftPulse = false;
     this.pausePulse = false;
@@ -38,12 +45,18 @@ export class Input {
     canvas.addEventListener("pointerdown", (event) => {
       this.requestPointerLock();
       this.updatePointer(event);
+      if (event.button === 2) {
+        this.pointer.dynamitePulse = true;
+        return;
+      }
       this.pointer.down = true;
       this.pointer.firePulse = true;
     });
     canvas.addEventListener("contextmenu", (event) => event.preventDefault());
-    window.addEventListener("pointerup", () => {
-      this.pointer.down = false;
+    window.addEventListener("pointerup", (event) => {
+      if (event.button === 0) {
+        this.pointer.down = false;
+      }
     });
   }
 
@@ -119,6 +132,13 @@ export class Input {
     const fire = this.keys.has(" ") || this.pointer.firePulse || this.pointer.down;
     this.pointer.firePulse = false;
     return fire;
+  }
+
+  wantsDynamiteFor(player) {
+    if (player === 2) return this.keys.has("/");
+    const dynamite = this.keys.has("q") || this.pointer.dynamitePulse;
+    this.pointer.dynamitePulse = false;
+    return dynamite;
   }
 
   isFiringFor(player) {
