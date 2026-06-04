@@ -1,6 +1,168 @@
 import * as THREE from "../../vendor/three.module.js";
 
-export function makeCombatant(options = {}) {
+export function makeTank(options = {}) {
+  const group = new THREE.Group();
+  group.name = "CopperPlate MBT";
+
+  const baseColor = options.color ?? 0x2f3b32;
+  const accent = options.accent ?? 0xffd166;
+  const hullMaterial = new THREE.MeshStandardMaterial({
+    color: baseColor,
+    map: makeArmorTexture(`armor-${baseColor}`, baseColor, accent),
+    roughness: 0.66,
+    metalness: 0.3,
+  });
+  const darkMaterial = new THREE.MeshStandardMaterial({
+    color: 0x111716,
+    map: makeArmorTexture("track-rubber", 0x151917, 0x3d4a43),
+    roughness: 0.9,
+    metalness: 0.14,
+  });
+  const metalMaterial = new THREE.MeshStandardMaterial({ color: 0x3f4744, roughness: 0.58, metalness: 0.42 });
+  const glassMaterial = new THREE.MeshStandardMaterial({
+    color: 0x0d1719,
+    emissive: accent,
+    emissiveIntensity: 0.18,
+    roughness: 0.22,
+    metalness: 0.05,
+  });
+  const glowMaterial = new THREE.MeshBasicMaterial({ color: accent });
+
+  const lowerHull = new THREE.Mesh(new THREE.BoxGeometry(5.35, 0.72, 6.55), darkMaterial);
+  lowerHull.position.y = 0.74;
+  lowerHull.castShadow = true;
+  lowerHull.receiveShadow = true;
+  group.add(lowerHull);
+
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(4.95, 1.08, 5.95), hullMaterial);
+  hull.position.y = 1.05;
+  hull.castShadow = true;
+  hull.receiveShadow = true;
+  group.add(hull);
+
+  const glacis = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.34, 1.18), hullMaterial);
+  glacis.position.set(0, 1.55, -2.62);
+  glacis.rotation.x = -0.24;
+  glacis.castShadow = true;
+  group.add(glacis);
+
+  const engineDeck = new THREE.Mesh(new THREE.BoxGeometry(4.35, 0.16, 1.38), metalMaterial);
+  engineDeck.position.set(0, 1.66, 2.18);
+  engineDeck.castShadow = true;
+  group.add(engineDeck);
+
+  for (let i = 0; i < 5; i += 1) {
+    const vent = new THREE.Mesh(new THREE.BoxGeometry(3.55, 0.05, 0.11), darkMaterial);
+    vent.position.set(0, 1.77, 1.65 + i * 0.23);
+    vent.castShadow = true;
+    group.add(vent);
+  }
+
+  const turret = new THREE.Mesh(new THREE.BoxGeometry(3.25, 1.04, 2.72), hullMaterial);
+  turret.position.set(0, 2.18, -0.48);
+  turret.castShadow = true;
+  group.add(turret);
+
+  const turretFront = new THREE.Mesh(new THREE.BoxGeometry(2.72, 0.62, 0.48), metalMaterial);
+  turretFront.position.set(0, 2.22, -1.97);
+  turretFront.castShadow = true;
+  group.add(turretFront);
+
+  const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.58, 0.18, 22), metalMaterial);
+  hatch.position.set(-0.78, 2.82, -0.35);
+  hatch.castShadow = true;
+  group.add(hatch);
+
+  const optic = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.22, 0.62), glassMaterial);
+  optic.position.set(0.9, 2.79, -1.02);
+  group.add(optic);
+
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.23, 7.35, 22), darkMaterial);
+  barrel.position.set(0, 2.24, -4.5);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.castShadow = true;
+  group.add(barrel);
+
+  const muzzleBrake = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.28, 0.42), metalMaterial);
+  muzzleBrake.position.set(0, 2.24, -8.18);
+  muzzleBrake.castShadow = true;
+  group.add(muzzleBrake);
+
+  const muzzleSlot = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.08, 0.52), darkMaterial);
+  muzzleSlot.position.set(0, 2.24, -8.18);
+  group.add(muzzleSlot);
+
+  for (const x of [-2.65, 2.65]) {
+    const track = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.78, 6.78), darkMaterial);
+    track.position.set(x, 0.62, 0);
+    track.castShadow = true;
+    track.receiveShadow = true;
+    group.add(track);
+
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.52, 5.82), hullMaterial);
+    skirt.position.set(x * 0.88, 1.14, -0.04);
+    skirt.castShadow = true;
+    group.add(skirt);
+
+    for (let i = 0; i < 7; i += 1) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.18, 20), metalMaterial);
+      wheel.position.set(x, 0.58, -2.72 + i * 0.9);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.castShadow = true;
+      group.add(wheel);
+
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.2, 14), glowMaterial);
+      hub.position.copy(wheel.position);
+      hub.rotation.z = Math.PI / 2;
+      group.add(hub);
+    }
+
+    for (let i = 0; i < 10; i += 1) {
+      const tread = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.12, 0.34), metalMaterial);
+      tread.position.set(x, 1.05, -3.04 + i * 0.68);
+      tread.castShadow = true;
+      group.add(tread);
+    }
+  }
+
+  const marker = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.08, 0.65), glowMaterial);
+  marker.position.set(0, 2.72, -1.58);
+  group.add(marker);
+
+  for (const x of [-1.95, 1.95]) {
+    const headlight = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), glowMaterial);
+    headlight.position.set(x, 1.42, -3.1);
+    group.add(headlight);
+  }
+
+  for (const x of [-1.2, 1.2]) {
+    const exhaust = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.24, 0.2), darkMaterial);
+    exhaust.position.set(x, 1.05, 3.12);
+    group.add(exhaust);
+  }
+
+  for (let i = 0; i < 8; i += 1) {
+    for (const x of [-2.24, 2.24]) {
+      const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.06, 8), metalMaterial);
+      bolt.position.set(x, 1.52, -2.35 + i * 0.64);
+      bolt.rotation.z = Math.PI / 2;
+      group.add(bolt);
+    }
+  }
+
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 2.4, 8), darkMaterial);
+  antenna.position.set(1.22, 3.58, 0.72);
+  antenna.rotation.x = 0.14;
+  group.add(antenna);
+
+  const antennaTip = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), glowMaterial);
+  antennaTip.position.set(1.22, 4.82, 0.9);
+  group.add(antennaTip);
+
+  return group;
+}
+
+export function makeHumanCombatant(options = {}) {
   const group = new THREE.Group();
   group.name = "Infantry Combatant";
 
