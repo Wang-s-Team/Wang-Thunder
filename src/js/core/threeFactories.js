@@ -168,6 +168,7 @@ function addLimb(group, start, end, radius, material) {
 export function makeBattlefield() {
   const group = new THREE.Group();
   const navBlockers = [];
+  const attackBlockers = [];
   const field = {
     width: 620,
     depth: 780,
@@ -251,6 +252,57 @@ export function makeBattlefield() {
       group.add(barrier);
       navBlockers.push({ x: barrier.position.x, z: barrier.position.z, radius: 2.8 });
     }
+  }
+
+  const buildingMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2f3732,
+    map: makeArmorTexture("hardened-building", 0x2f3732, 0x43e0ff),
+    roughness: 0.84,
+    metalness: 0.12,
+  });
+  const bunkerMaterial = new THREE.MeshStandardMaterial({
+    color: 0x4b5149,
+    map: makeArmorTexture("reinforced-bunker", 0x4b5149, 0xffd166),
+    roughness: 0.88,
+    metalness: 0.08,
+  });
+  const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x151a18, roughness: 0.78, metalness: 0.26 });
+  const slitMaterial = new THREE.MeshBasicMaterial({ color: 0x43e0ff, transparent: true, opacity: 0.55 });
+  const buildingPlans = [
+    { name: "北侧指挥楼", x: -48, z: -32, width: 16, depth: 10, height: 7.2, rotation: 0.16, bunker: false },
+    { name: "中部雷达站", x: -10, z: -70, width: 14, depth: 18, height: 8.4, rotation: -0.08, bunker: false, dish: true },
+    { name: "东侧通讯塔楼", x: 38, z: -38, width: 12, depth: 12, height: 11.5, rotation: 0.22, bunker: false },
+    { name: "东线装甲库", x: 66, z: -102, width: 18, depth: 11, height: 6.8, rotation: -0.2, bunker: true },
+    { name: "西线仓库", x: -72, z: -126, width: 14, depth: 20, height: 8.2, rotation: 0.1, bunker: true },
+    { name: "中央弹药棚", x: -28, z: -160, width: 22, depth: 12, height: 6.4, rotation: -0.32, bunker: true },
+    { name: "南侧维修库", x: 28, z: -192, width: 14, depth: 16, height: 7.8, rotation: 0.14, bunker: true },
+    { name: "南线通讯楼", x: -2, z: -226, width: 18, depth: 10, height: 6.6, rotation: -0.18, bunker: false },
+    { name: "西南掩体", x: -92, z: -194, width: 12, depth: 13, height: 5.8, rotation: 0.3, bunker: true },
+    { name: "东南掩体", x: 94, z: -164, width: 13, depth: 12, height: 5.9, rotation: -0.26, bunker: true },
+    { name: "西北岗楼", x: -92, z: -42, width: 10, depth: 12, height: 9.6, rotation: -0.12, bunker: false },
+    { name: "跑道控制室", x: 18, z: 10, width: 13, depth: 9, height: 6.2, rotation: 0.28, bunker: false },
+  ];
+
+  for (const plan of buildingPlans) {
+    const building = makeHardenedBuilding(plan, {
+      buildingMaterial,
+      bunkerMaterial,
+      roofMaterial,
+      slitMaterial,
+      towerMaterial: barrierMaterial,
+    });
+    group.add(building);
+
+    const blocker = {
+      name: plan.name,
+      x: plan.x,
+      z: plan.z,
+      radius: Math.hypot(plan.width, plan.depth) * 0.42 + 1.2,
+      height: plan.height + 1.4,
+      armor: plan.bunker ? 3 : 2,
+    };
+    navBlockers.push(blocker);
+    attackBlockers.push(blocker);
   }
 
   const scorchMaterial = new THREE.MeshBasicMaterial({
@@ -338,6 +390,67 @@ export function makeBattlefield() {
 
   group.add(makeStarfield(rand, field));
   group.userData.navBlockers = navBlockers;
+  group.userData.attackBlockers = attackBlockers;
+
+  return group;
+}
+
+function makeHardenedBuilding(plan, materials) {
+  const group = new THREE.Group();
+  group.name = plan.name;
+  group.position.set(plan.x, 0, plan.z);
+  group.rotation.y = plan.rotation;
+
+  const wallMaterial = plan.bunker ? materials.bunkerMaterial : materials.buildingMaterial;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(plan.width, plan.height, plan.depth), wallMaterial);
+  body.position.y = plan.height / 2;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(plan.width + 1.2, 0.44, plan.depth + 1.2), materials.roofMaterial);
+  roof.position.y = plan.height + 0.22;
+  roof.castShadow = true;
+  roof.receiveShadow = true;
+  group.add(roof);
+
+  const apron = new THREE.Mesh(
+    new THREE.BoxGeometry(plan.width + 3.2, 0.16, plan.depth + 3.2),
+    new THREE.MeshStandardMaterial({ color: 0x202622, roughness: 0.9, metalness: 0.05 }),
+  );
+  apron.position.y = 0.1;
+  apron.receiveShadow = true;
+  group.add(apron);
+
+  const slitY = Math.min(plan.height - 1.1, 3.4);
+  for (const side of [-1, 1]) {
+    const slit = new THREE.Mesh(new THREE.BoxGeometry(plan.width * 0.58, 0.16, 0.06), materials.slitMaterial);
+    slit.position.set(0, slitY, side * (plan.depth / 2 + 0.035));
+    group.add(slit);
+  }
+
+  for (const side of [-1, 1]) {
+    const vent = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.8, plan.depth * 0.42), materials.roofMaterial);
+    vent.position.set(side * plan.width * 0.32, plan.height + 0.78, 0);
+    vent.castShadow = true;
+    group.add(vent);
+  }
+
+  if (plan.dish) {
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 4.4, 10), materials.towerMaterial);
+    mast.position.set(plan.width * 0.22, plan.height + 2.2, -plan.depth * 0.12);
+    mast.castShadow = true;
+    group.add(mast);
+
+    const dish = new THREE.Mesh(
+      new THREE.SphereGeometry(1.25, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0x243033, roughness: 0.5, metalness: 0.34, side: THREE.DoubleSide }),
+    );
+    dish.position.set(plan.width * 0.22, plan.height + 4.5, -plan.depth * 0.12);
+    dish.rotation.x = -0.72;
+    dish.rotation.y = 0.35;
+    group.add(dish);
+  }
 
   return group;
 }

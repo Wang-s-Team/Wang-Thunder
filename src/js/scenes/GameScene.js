@@ -61,6 +61,7 @@ export class GameScene {
     setupLighting(this.scene);
     const battlefield = makeBattlefield();
     this.navBlockers = battlefield.userData.navBlockers ?? [];
+    this.attackBlockers = battlefield.userData.attackBlockers ?? [];
     this.scene.add(battlefield);
 
     this.bases = [
@@ -119,6 +120,7 @@ export class GameScene {
     this.dustTimer = 0;
     this.hitTimer = 0;
     this.damageFlash = 0;
+    this.coverLogCooldown = 0;
     this.waveAlertTimer = 2.6;
     this.radio = radioLines[0];
     this.radioTimer = 3.2;
@@ -174,6 +176,7 @@ export class GameScene {
     this.firstPerson.recoil = Math.max(0, this.firstPerson.recoil - dt * 5.2);
     this.hitTimer = Math.max(0, this.hitTimer - dt);
     this.damageFlash = Math.max(0, this.damageFlash - dt * 2.2);
+    this.coverLogCooldown = Math.max(0, this.coverLogCooldown - dt);
     this.waveAlertTimer = Math.max(0, this.waveAlertTimer - dt);
     this.radioTimer -= dt;
     this.dustTimer -= dt;
@@ -305,6 +308,7 @@ export class GameScene {
     const aim = angleToTarget(vehicle, aimPoint);
     vehicle.heading = lerpAngle(vehicle.heading, aim, Math.min(1, dt * 4.2));
     this.applyBlastMotion(vehicle, dt);
+    this.resolveVehicleCoverCollision(vehicle);
     vehicle.group.position.set(vehicle.x, vehicle.air, vehicle.z);
     vehicle.group.rotation.y = vehicle.heading;
     vehicle.group.rotation.x = THREE.MathUtils.clamp(-vehicle.blastVelocity.z * 0.006, -0.22, 0.22);
@@ -351,6 +355,7 @@ export class GameScene {
     vehicle.heading = this.firstPerson.yaw;
     vehicle.aimPoint.copy(this.centerAimPoint(vehicle));
     this.applyBlastMotion(vehicle, dt);
+    this.resolveVehicleCoverCollision(vehicle);
     vehicle.group.position.set(vehicle.x, vehicle.air, vehicle.z);
     vehicle.group.rotation.y = vehicle.heading;
     vehicle.group.rotation.x = THREE.MathUtils.clamp(-vehicle.blastVelocity.z * 0.006, -0.22, 0.22);
@@ -583,14 +588,22 @@ export class GameScene {
 
   updateProjectiles(dt) {
     for (const projectile of this.projectiles) {
+      const previousPosition = projectile.position.clone();
       projectile.position.addScaledVector(projectile.userData.velocity, dt);
       projectile.userData.life -= dt;
       if (projectile.userData.dynamite) {
         projectile.rotation.z += dt * 11;
         projectile.rotation.x += dt * 3.5;
-        if (projectile.userData.life <= 0) {
-          this.detonateDynamite(projectile);
-        }
+      }
+
+      const coverImpact = projectile.userData.life > 0 ? this.projectileCoverImpact(projectile, previousPosition) : null;
+      if (coverImpact) {
+        this.absorbProjectileByCover(projectile, coverImpact);
+        continue;
+      }
+
+      if (projectile.userData.dynamite && projectile.userData.life <= 0) {
+        this.detonateDynamite(projectile);
       }
     }
     const removed = this.projectiles.filter(
@@ -892,7 +905,8 @@ export class GameScene {
       const distance = distanceXZ(projectile.position, target);
       if (distance > DYNAMITE_RADIUS) continue;
       const falloff = 1 - distance / DYNAMITE_RADIUS;
-      const damage = DYNAMITE_DAMAGE * (0.35 + falloff * 0.65);
+      const coverMultiplier = this.blastCoverMultiplier(projectile.position, target);
+      const damage = DYNAMITE_DAMAGE * (0.35 + falloff * 0.65) * coverMultiplier;
       target.health = Math.max(0, target.health - damage);
       target.invincible = 0.45;
       owner.hits += 1;
@@ -908,11 +922,15 @@ export class GameScene {
       }
       if (blastDirection.lengthSq() < 0.01) blastDirection.set(owner.id === 1 ? 1 : -1, 0, 0);
       blastDirection.normalize();
-      const impulse = DYNAMITE_KNOCKBACK * (0.42 + falloff * 0.58);
+      const impulse = DYNAMITE_KNOCKBACK * (0.42 + falloff * 0.58) * coverMultiplier;
       target.blastVelocity.addScaledVector(blastDirection, impulse);
-      target.verticalVelocity = Math.max(target.verticalVelocity, DYNAMITE_LIFT * (0.45 + falloff * 0.75));
+      target.verticalVelocity = Math.max(target.verticalVelocity, DYNAMITE_LIFT * (0.45 + falloff * 0.75) * coverMultiplier);
       target.air = Math.max(target.air, 0.08);
-      this.pushLog(`${owner.name} 雷管炸飞 ${target.name}`);
+      if (coverMultiplier < 0.5) {
+        this.pushCoverLog("加固建筑削弱了雷管冲击");
+      } else {
+        this.pushLog(`${owner.name} 雷管炸飞 ${target.name}`);
+      }
 
       if (target.health <= 0) {
         target.alive = false;
@@ -1173,6 +1191,81 @@ export class GameScene {
     return true;
   }
 
+  projectileCoverImpact(projectile, previousPosition) {
+    let closest = null;
+    for (const blocker of this.attackBlockers) {
+      const radius = blocker.radius + (projectile.userData.dynamite ? 0.35 : 0.12);
+      const t = segmentCircleIntersectionT(previousPosition, projectile.position, blocker, radius);
+      if (t === null) continue;
+      const impactY = THREE.MathUtils.lerp(previousPosition.y, projectile.position.y, t);
+      const maxHeight = blocker.height ?? 5;
+      if (impactY < -0.2 || impactY > maxHeight + 0.8) continue;
+      if (closest && t >= closest.t) continue;
+      closest = {
+        t,
+        blocker,
+        point: previousPosition.clone().lerp(projectile.position, t),
+      };
+      closest.point.y = THREE.MathUtils.clamp(impactY, 0.22, maxHeight);
+    }
+    return closest;
+  }
+
+  absorbProjectileByCover(projectile, impact) {
+    const owner = this.vehicles.find((vehicle) => vehicle.id === projectile.userData.owner);
+    projectile.position.copy(impact.point);
+    if (projectile.userData.dynamite) {
+      this.detonateDynamite(projectile);
+      this.pushCoverLog(`${impact.blocker.name ?? "加固建筑"} 扛住雷管冲击`);
+      return;
+    }
+
+    projectile.userData.life = 0;
+    this.addExplosion(impact.point, owner?.accent ?? 0xffd166, projectile.userData.ciws ? 2 : 7);
+    if (!projectile.userData.ciws) {
+      this.shake = Math.max(this.shake, 0.28);
+      this.pushCoverLog(`${impact.blocker.name ?? "加固建筑"} 挡下射击`);
+    }
+  }
+
+  blastCoverMultiplier(origin, target) {
+    let cover = 0;
+    for (const blocker of this.attackBlockers) {
+      if (distancePointToSegmentXZ(blocker, origin, target) < blocker.radius) {
+        cover += blocker.armor ?? 1;
+      }
+    }
+    if (cover >= 4) return 0.16;
+    if (cover >= 2) return 0.28;
+    if (cover > 0) return 0.42;
+    return 1;
+  }
+
+  resolveVehicleCoverCollision(vehicle) {
+    for (const blocker of this.attackBlockers) {
+      const minDistance = blocker.radius + 1.85;
+      const dx = vehicle.x - blocker.x;
+      const dz = vehicle.z - blocker.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance >= minDistance) continue;
+      const pushX = distance > 0.001 ? dx / distance : vehicle.id === 1 ? -1 : 1;
+      const pushZ = distance > 0.001 ? dz / distance : 0;
+      vehicle.x = THREE.MathUtils.clamp(blocker.x + pushX * minDistance, -ARENA.x, ARENA.x);
+      vehicle.z = THREE.MathUtils.clamp(blocker.z + pushZ * minDistance, ARENA.zMin, ARENA.zMax);
+      const pushNormal = new THREE.Vector3(pushX, 0, pushZ);
+      const inwardVelocity = vehicle.velocity.dot(pushNormal);
+      if (inwardVelocity < 0) {
+        vehicle.velocity.addScaledVector(pushNormal, -inwardVelocity);
+      }
+    }
+  }
+
+  pushCoverLog(line) {
+    if (this.coverLogCooldown > 0) return;
+    this.pushLog(line);
+    this.coverLogCooldown = 1.1;
+  }
+
   applyBlastMotion(vehicle, dt) {
     if (vehicle.blastVelocity.lengthSq() > 0.01) {
       vehicle.x = THREE.MathUtils.clamp(vehicle.x + vehicle.blastVelocity.x * dt, -ARENA.x, ARENA.x);
@@ -1367,6 +1460,29 @@ function distancePointToSegmentXZ(point, start, end) {
   if (lengthSq <= 0.0001) return Math.hypot(point.x - sx, point.z - sz);
   const t = THREE.MathUtils.clamp(((point.x - sx) * dx + (point.z - sz) * dz) / lengthSq, 0, 1);
   return Math.hypot(point.x - (sx + dx * t), point.z - (sz + dz * t));
+}
+
+function segmentCircleIntersectionT(start, end, circle, radius = circle.radius) {
+  const sx = start.x - circle.x;
+  const sz = start.z - circle.z;
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const a = dx * dx + dz * dz;
+  if (a <= 0.0001) {
+    return sx * sx + sz * sz <= radius * radius ? 0 : null;
+  }
+
+  const b = 2 * (sx * dx + sz * dz);
+  const c = sx * sx + sz * sz - radius * radius;
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return null;
+
+  const root = Math.sqrt(discriminant);
+  const t1 = (-b - root) / (2 * a);
+  const t2 = (-b + root) / (2 * a);
+  if (t1 >= 0 && t1 <= 1) return t1;
+  if (t2 >= 0 && t2 <= 1) return t2;
+  return null;
 }
 
 function predictedAimPoint(target, leadSeconds = 0.16) {
