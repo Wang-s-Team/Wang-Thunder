@@ -1165,7 +1165,8 @@ export class GameScene {
 
   spendEnergy(vehicle, amount, message) {
     if (vehicle.energy < amount) {
-      vehicle.energy = Math.max(0, vehicle.energy);
+      vehicle.energy = 0;
+      this.teleportVehicleToBase(vehicle);
       if (vehicle.energyBlockCooldown <= 0) {
         this.pushLog(message);
         vehicle.energyBlockCooldown = 1.2;
@@ -1173,7 +1174,26 @@ export class GameScene {
       return false;
     }
     vehicle.energy = Math.max(0, vehicle.energy - amount);
+    if (vehicle.energy <= 0) {
+      this.teleportVehicleToBase(vehicle);
+    }
     return true;
+  }
+
+  teleportVehicleToBase(vehicle) {
+    const base = this.baseOf(vehicle);
+    if (!vehicle?.alive || !base) return;
+    vehicle.x = base.x;
+    vehicle.z = base.z;
+    vehicle.air = 0;
+    vehicle.verticalVelocity = 0;
+    vehicle.velocity.set(0, 0, 0);
+    vehicle.blastVelocity.set(0, 0, 0);
+    vehicle.aimPoint.set(base.x, 0, base.z);
+    vehicle.group.position.set(vehicle.x, vehicle.air, vehicle.z);
+    vehicle.group.rotation.x = 0;
+    vehicle.group.rotation.z = 0;
+    this.pushLog(`${vehicle.name} 能量耗尽，强制传送回基地`);
   }
 
   isInsideBase(vehicle, base) {
