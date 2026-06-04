@@ -52,6 +52,7 @@ export class GameScene {
     this.aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.pointerNdc = new THREE.Vector2();
     this.cameraDirection = new THREE.Vector3();
+    this.p2Camera = null;
   }
 
   enter(payload = {}) {
@@ -62,6 +63,8 @@ export class GameScene {
     this.scene.fog = new THREE.Fog(0x07090d, 150, 680);
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 820);
     this.camera.position.set(-16, 3.1, 32);
+    this.p2Camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.1, 820);
+    this.p2Camera.position.set(74, 9, -204);
 
     setupLighting(this.scene);
     const battlefield = makeBattlefield();
@@ -143,9 +146,13 @@ export class GameScene {
 
     this.elements.hud.classList.add("hud--active");
     this.elements.hud.classList.add("hud--first-person");
+    this.elements.hud.classList.toggle("hud--split-screen", this.usesSplitScreen());
     this.elements.pause.classList.remove("pause-layer--active");
     this.pushLog(`${this.modeInfo.name} 已启动`);
     this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 雷管，R 发射滚珠轴承，E 呼叫星链");
+    if (this.usesSplitScreen()) {
+      this.pushLog("双视角已开启：P1 上屏，P2 下屏");
+    }
     this.resize(window.innerWidth, window.innerHeight);
     this.updateHud();
   }
@@ -153,6 +160,8 @@ export class GameScene {
   exit() {
     this.elements.hud.classList.remove("hud--active");
     this.elements.hud.classList.remove("hud--first-person");
+    this.elements.hud.classList.remove("hud--split-screen");
+    this.elements.hud.classList.remove("hud--radar-link");
     this.elements.pause.classList.remove("pause-layer--active");
     this.input.releasePointerLock?.();
     this.disposeScene();
@@ -160,8 +169,13 @@ export class GameScene {
 
   resize(width, height) {
     if (!this.camera) return;
-    this.camera.aspect = width / height;
+    const viewHeight = this.usesSplitScreen() ? height / 2 : height;
+    this.camera.aspect = width / viewHeight;
     this.camera.updateProjectionMatrix();
+    if (this.p2Camera) {
+      this.p2Camera.aspect = width / viewHeight;
+      this.p2Camera.updateProjectionMatrix();
+    }
   }
 
   update(dt) {
@@ -220,7 +234,36 @@ export class GameScene {
   }
 
   render(renderer) {
-    renderer.render(this.scene, this.camera);
+    const width = renderer.domElement.width;
+    const height = renderer.domElement.height;
+    if (!this.usesSplitScreen()) {
+      renderer.setScissorTest(false);
+      renderer.setViewport(0, 0, width, height);
+      renderer.setScissor(0, 0, width, height);
+      renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    const halfHeight = Math.floor(height / 2);
+    const topHeight = height - halfHeight;
+    const previousAutoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.setScissorTest(true);
+
+    this.renderViewport(renderer, this.p2Camera, 0, 0, width, halfHeight);
+    this.renderViewport(renderer, this.camera, 0, halfHeight, width, topHeight);
+
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, width, height);
+    renderer.setScissor(0, 0, width, height);
+    renderer.autoClear = previousAutoClear;
+  }
+
+  renderViewport(renderer, camera, x, y, width, height) {
+    renderer.setViewport(x, y, width, height);
+    renderer.setScissor(x, y, width, height);
+    renderer.clear(true, true, true);
+    renderer.render(this.scene, camera);
   }
 
   createVehicle({ id, name, controller, color, accent, x, z, heading }) {
@@ -1076,6 +1119,11 @@ export class GameScene {
   }
 
   updateCamera(dt) {
+    this.updatePrimaryCamera(dt);
+    this.updateP2Camera(dt);
+  }
+
+  updatePrimaryCamera(dt) {
     const human = this.vehicles.find((vehicle) => vehicle.controller === "human1" && vehicle.alive);
     if (human) {
       this.updateFirstPersonCamera(human);
@@ -1095,6 +1143,37 @@ export class GameScene {
     );
     this.camera.position.lerp(targetPosition, Math.min(1, dt * 4.5));
     this.camera.lookAt(midpoint.x, 2.8, midpoint.z - 1.5);
+  }
+
+  updateP2Camera(dt) {
+    if (!this.usesSplitScreen() || !this.p2Camera) return;
+    const p2 = this.vehicles[1];
+    if (!p2) return;
+    this.updateThirdPersonCamera(this.p2Camera, p2, dt);
+  }
+
+  updateThirdPersonCamera(camera, vehicle, dt) {
+    const forward = forwardFromHeading(vehicle.heading);
+    const right = rightFromHeading(vehicle.heading);
+    const shakeOffset = new THREE.Vector3(
+      (Math.random() - 0.5) * this.shake * 0.035,
+      (Math.random() - 0.5) * this.shake * 0.025,
+      (Math.random() - 0.5) * this.shake * 0.035,
+    );
+    const anchor = new THREE.Vector3(vehicle.x, 2.4 + vehicle.air, vehicle.z);
+    const targetPosition = anchor
+      .clone()
+      .addScaledVector(forward, -18)
+      .addScaledVector(right, 3.2)
+      .add(new THREE.Vector3(0, 6.8, 0))
+      .add(shakeOffset);
+    const lookAt = anchor.clone().addScaledVector(forward, 28).add(new THREE.Vector3(0, 1.4, 0));
+    const enemy = this.enemyOf(vehicle);
+    if (enemy) {
+      lookAt.lerp(new THREE.Vector3(enemy.x, 2.2 + enemy.air, enemy.z), 0.36);
+    }
+    camera.position.lerp(targetPosition, Math.min(1, dt * 5.6));
+    camera.lookAt(lookAt);
   }
 
   updateFirstPersonCamera(vehicle) {
@@ -1160,7 +1239,9 @@ export class GameScene {
     const enemy = this.enemyOf(aimingVehicle);
     if (!aimingVehicle || !enemy) return;
     const firstPersonHuman = aimingVehicle.controller === "human1";
-    const screen = firstPersonHuman ? { left: 50, top: 50 } : this.projectToHud(aimingVehicle.aimPoint ?? predictedAimPoint(enemy, 0.12));
+    const screen = firstPersonHuman
+      ? { left: 50, top: this.usesSplitScreen() ? 25 : 50 }
+      : this.projectToHud(aimingVehicle.aimPoint ?? predictedAimPoint(enemy, 0.12));
     this.elements.reticle.style.left = `${screen.left}%`;
     this.elements.reticle.style.top = `${screen.top}%`;
     this.elements.targetLock.style.left = `${screen.left}%`;
@@ -1568,6 +1649,10 @@ export class GameScene {
         object.material?.dispose?.();
       }
     });
+  }
+
+  usesSplitScreen() {
+    return this.mode === "pvp";
   }
 }
 
