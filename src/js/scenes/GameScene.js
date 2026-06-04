@@ -11,15 +11,17 @@ import {
   makeTracer,
 } from "../core/threeFactories.js";
 
-const ROUND_SECONDS = 180;
-const ARENA = { x: 44, zMin: -96, zMax: 42 };
-const BASE_RADIUS = 16;
+const ROUND_SECONDS = 240;
+const ARENA = { x: 120, zMin: -250, zMax: 50 };
+const ARENA_CENTER_Z = (ARENA.zMin + ARENA.zMax) / 2;
+const PROJECTILE_BOUNDS = { x: ARENA.x + 80, zMin: ARENA.zMin - 90, zMax: ARENA.zMax + 90 };
+const BASE_RADIUS = 20;
 const BASE_CAPTURE_SECONDS = 6;
 const CIWS_RATE_PER_SECOND = 13000 / 60;
 const ENERGY_MAX = 100;
-const ENERGY_RECHARGE_PER_SECOND = 34;
-const ENERGY_MOVE_PER_SECOND = 8.5;
-const ENERGY_SPRINT_EXTRA_PER_SECOND = 5;
+const ENERGY_RECHARGE_PER_SECOND = 42;
+const ENERGY_MOVE_PER_SECOND = 4.2;
+const ENERGY_SPRINT_EXTRA_PER_SECOND = 3;
 const ENERGY_SHOT_COST = 16;
 const ENERGY_DYNAMITE_COST = 38;
 const ENERGY_CIWS_ROUND_COST = 0.06;
@@ -52,8 +54,8 @@ export class GameScene {
     this.modeInfo = MODES[this.mode] ?? MODES.pve;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x07090d);
-    this.scene.fog = new THREE.Fog(0x07090d, 88, 260);
-    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 360);
+    this.scene.fog = new THREE.Fog(0x07090d, 150, 680);
+    this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 820);
     this.camera.position.set(-16, 3.1, 32);
 
     setupLighting(this.scene);
@@ -67,16 +69,16 @@ export class GameScene {
         name: "蓝方基地",
         color: 0x2f5f78,
         accent: 0x43e0ff,
-        x: -18,
-        z: 34,
+        x: -78,
+        z: 28,
       }),
       this.createBase({
         ownerId: 2,
         name: "红方基地",
         color: 0x743941,
         accent: 0xff4f64,
-        x: 18,
-        z: -82,
+        x: 78,
+        z: -228,
       }),
     ];
 
@@ -87,8 +89,8 @@ export class GameScene {
         controller: this.modeInfo.controllers[0],
         color: 0x2f5f78,
         accent: 0x43e0ff,
-        x: -16,
-        z: 32,
+        x: -74,
+        z: 24,
         heading: 0,
       }),
       this.createVehicle({
@@ -97,8 +99,8 @@ export class GameScene {
         controller: this.modeInfo.controllers[1],
         color: 0x743941,
         accent: 0xff4f64,
-        x: 16,
-        z: -78,
+        x: 74,
+        z: -224,
         heading: Math.PI,
       }),
     ];
@@ -123,7 +125,7 @@ export class GameScene {
     this.logs = [];
     this.navigationActive = false;
     this.navigator = null;
-    this.navFocus = new THREE.Vector3(-18, 0, 34);
+    this.navFocus = new THREE.Vector3(-78, 0, 28);
     this.firstPerson = {
       yaw: 0,
       pitch: 0,
@@ -444,7 +446,7 @@ export class GameScene {
     const distance = Math.hypot(dx, dz) || 1;
     const toward = new THREE.Vector2(dx / distance, dz / distance);
     const side = new THREE.Vector2(-toward.y, toward.x).multiplyScalar(vehicle.ai.strafe);
-    const rangeControl = distance > 72 ? 1.25 : distance > 48 ? 0.95 : distance < 24 ? -0.82 : 0.15;
+    const rangeControl = distance > 150 ? 1.3 : distance > 84 ? 0.98 : distance < 32 ? -0.85 : 0.18;
     const weave = Math.sin(this.clock * (0.8 + vehicle.id * 0.25)) * 0.65;
     return {
       x: toward.x * rangeControl + side.x * (0.9 + weave * 0.3),
@@ -458,13 +460,13 @@ export class GameScene {
     const facing = forwardFromHeading(vehicle.heading);
     const toEnemy = new THREE.Vector3(enemy.x - vehicle.x, 0, enemy.z - vehicle.z).normalize();
     const aimQuality = facing.dot(toEnemy);
-    return distance < 116 && aimQuality > 0.78 && Math.random() < vehicle.ai.fireBias;
+    return distance < 190 && aimQuality > 0.78 && Math.random() < vehicle.ai.fireBias;
   }
 
   aiWantsDynamite(vehicle, enemy) {
     if (vehicle.cooldown > 0 || vehicle.energy < ENERGY_DYNAMITE_COST) return false;
     const distance = distanceXZ(vehicle, enemy);
-    if (distance < 18 || distance > 78) return false;
+    if (distance < 20 || distance > 122) return false;
     const facing = forwardFromHeading(vehicle.heading);
     const toEnemy = new THREE.Vector3(enemy.x - vehicle.x, 0, enemy.z - vehicle.z).normalize();
     return facing.dot(toEnemy) > 0.86 && Math.random() < 0.18;
@@ -487,7 +489,7 @@ export class GameScene {
     projectile.userData = {
       owner: vehicle.id,
       velocity: shotDirection.multiplyScalar(82),
-      life: 2.05,
+      life: 3.05,
       damage: 22,
     };
     this.scene.add(projectile);
@@ -512,7 +514,7 @@ export class GameScene {
     projectile.userData = {
       owner: vehicle.id,
       velocity: direction.clone().multiplyScalar(96),
-      life: 2.05,
+      life: 3.05,
       damage: 22,
     };
     this.scene.add(projectile);
@@ -559,7 +561,7 @@ export class GameScene {
     projectile.userData = {
       owner: vehicle.id,
       velocity: direction.clone().multiplyScalar(speed),
-      life: 1.65,
+      life: 2.15,
       damage: DYNAMITE_DAMAGE,
       dynamite: true,
       detonated: false,
@@ -594,9 +596,9 @@ export class GameScene {
     const removed = this.projectiles.filter(
       (projectile) =>
         projectile.userData.life <= 0 ||
-        Math.abs(projectile.position.x) > 140 ||
-        projectile.position.z < -180 ||
-        projectile.position.z > 112,
+        Math.abs(projectile.position.x) > PROJECTILE_BOUNDS.x ||
+        projectile.position.z < PROJECTILE_BOUNDS.zMin ||
+        projectile.position.z > PROJECTILE_BOUNDS.zMax,
     );
     removed.forEach((projectile) => this.scene.remove(projectile));
     this.projectiles = this.projectiles.filter((projectile) => !removed.includes(projectile));
@@ -669,7 +671,7 @@ export class GameScene {
   }
 
   aiWantsCiws(base, enemy) {
-    return distanceXZ(base, enemy) < 98 && this.hasLineOfSight(base, predictedAimPoint(enemy, 0.08));
+    return distanceXZ(base, enemy) < 160 && this.hasLineOfSight(base, predictedAimPoint(enemy, 0.08));
   }
 
   fireCiwsRound(base, owner, aimPoint, index) {
@@ -695,7 +697,7 @@ export class GameScene {
     projectile.userData = {
       owner: owner.id,
       velocity: shotDirection.multiplyScalar(168),
-      life: 0.68,
+      life: 1.05,
       damage: 2.2,
       ciws: true,
     };
@@ -931,7 +933,7 @@ export class GameScene {
       0,
       (this.vehicles[0].z + this.vehicles[1].z) / 2,
     );
-    const distance = THREE.MathUtils.clamp(distanceXZ(this.vehicles[0], this.vehicles[1]), 42, 118);
+    const distance = THREE.MathUtils.clamp(distanceXZ(this.vehicles[0], this.vehicles[1]), 70, 280);
     const targetPosition = new THREE.Vector3(
       midpoint.x * 0.35 + (Math.random() - 0.5) * this.shake,
       30 + distance * 0.12,
@@ -1055,7 +1057,7 @@ export class GameScene {
         kind: projectile.userData.owner === 1 ? "shot-blue" : "shot-red",
       })).filter((projectile) => this.hasLineOfSight(navBase, projectile)),
     ];
-    const centerZ = (ARENA.zMin + ARENA.zMax) / 2;
+    const centerZ = ARENA_CENTER_Z;
     const halfZ = (ARENA.zMax - ARENA.zMin) / 2;
     this.elements.radarBlips.innerHTML = dots
       .map((dot) => {
@@ -1306,26 +1308,26 @@ function makeDynamiteProjectile(accent) {
 
 function setupLighting(scene) {
   const sun = new THREE.DirectionalLight(0xfff6dc, 3.0);
-  sun.position.set(28, 42, 34);
+  sun.position.set(96, 88, 72);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -110;
-  sun.shadow.camera.right = 110;
-  sun.shadow.camera.top = 110;
-  sun.shadow.camera.bottom = -110;
+  sun.shadow.mapSize.set(4096, 4096);
+  sun.shadow.camera.left = -260;
+  sun.shadow.camera.right = 260;
+  sun.shadow.camera.top = 300;
+  sun.shadow.camera.bottom = -300;
   scene.add(sun);
   scene.add(new THREE.HemisphereLight(0x94dcff, 0x162018, 1.65));
 
   const rim = new THREE.DirectionalLight(0x43e0ff, 1.1);
-  rim.position.set(-70, 28, -92);
+  rim.position.set(-170, 44, -260);
   scene.add(rim);
 
-  const fill = new THREE.PointLight(0x43e0ff, 1.45, 120);
-  fill.position.set(-34, 12, 26);
+  const fill = new THREE.PointLight(0x43e0ff, 1.45, 260);
+  fill.position.set(-86, 16, 34);
   scene.add(fill);
 
-  const warning = new THREE.PointLight(0xff4f64, 0.92, 100);
-  warning.position.set(42, 10, -82);
+  const warning = new THREE.PointLight(0xff4f64, 0.92, 260);
+  warning.position.set(94, 16, -228);
   scene.add(warning);
 }
 

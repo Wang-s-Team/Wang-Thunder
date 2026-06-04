@@ -168,27 +168,34 @@ function addLimb(group, start, end, radius, material) {
 export function makeBattlefield() {
   const group = new THREE.Group();
   const navBlockers = [];
+  const field = {
+    width: 620,
+    depth: 780,
+    centerZ: -100,
+  };
+  const fieldMinZ = field.centerZ - field.depth / 2;
+  const fieldMaxZ = field.centerZ + field.depth / 2;
 
-  const terrainGeometry = new THREE.PlaneGeometry(280, 380, 112, 152);
+  const terrainGeometry = new THREE.PlaneGeometry(field.width, field.depth, 168, 212);
   const terrainRandom = seededRandom(7401);
   const positions = terrainGeometry.attributes.position;
   for (let i = 0; i < positions.count; i += 1) {
     const x = positions.getX(i);
     const y = positions.getY(i);
-    const ripple = Math.sin(x * 0.08) * 0.08 + Math.cos(y * 0.055) * 0.06 + (terrainRandom() - 0.5) * 0.08;
+    const ripple = Math.sin(x * 0.055) * 0.1 + Math.cos(y * 0.04) * 0.08 + (terrainRandom() - 0.5) * 0.1;
     positions.setZ(i, ripple);
   }
   terrainGeometry.computeVertexNormals();
 
-  const ground = new THREE.Mesh(terrainGeometry, makeGroundMaterial());
+  const ground = new THREE.Mesh(terrainGeometry, makeGroundMaterial(field.width, field.depth));
   ground.rotation.x = -Math.PI / 2;
-  ground.position.z = -48;
+  ground.position.z = field.centerZ;
   ground.receiveShadow = true;
   group.add(ground);
 
-  const grid = new THREE.GridHelper(280, 70, 0x52685f, 0x24302c);
+  const grid = new THREE.GridHelper(field.width, 124, 0x52685f, 0x24302c);
   grid.position.y = 0.03;
-  grid.position.z = -48;
+  grid.position.z = field.centerZ;
   group.add(grid);
 
   const plateMaterial = new THREE.MeshStandardMaterial({
@@ -197,9 +204,9 @@ export function makeBattlefield() {
     roughness: 0.8,
     metalness: 0.16,
   });
-  for (let i = 0; i < 20; i += 1) {
+  for (let i = 0; i < 56; i += 1) {
     const plate = new THREE.Mesh(new THREE.BoxGeometry(22, 0.05, 6.1), plateMaterial);
-    plate.position.set(0, 0.06, 40 - i * 10.8);
+    plate.position.set(0, 0.06, 76 - i * 10.8);
     plate.receiveShadow = true;
     group.add(plate);
 
@@ -209,7 +216,7 @@ export function makeBattlefield() {
           new THREE.BoxGeometry(0.22, 0.06, 4.2),
           new THREE.MeshBasicMaterial({ color: x < 0 ? 0x43e0ff : 0xffd166, transparent: true, opacity: 0.7 }),
         );
-        stripe.position.set(x, 0.1, 40 - i * 10.8);
+        stripe.position.set(x, 0.1, 76 - i * 10.8);
         group.add(stripe);
       }
     }
@@ -222,10 +229,10 @@ export function makeBattlefield() {
     roughness: 0.9,
     metalness: 0.05,
   });
-  for (let i = 0; i < 36; i += 1) {
+  for (let i = 0; i < 112; i += 1) {
     const size = 1.8 + rand() * 2.6;
     const crate = new THREE.Mesh(new THREE.BoxGeometry(size, 1.0 + rand() * 1.4, size * (0.75 + rand() * 0.55)), crateMaterial);
-    crate.position.set((rand() < 0.5 ? -1 : 1) * (28 + rand() * 76), 0.78, 58 - rand() * 238);
+    crate.position.set((rand() < 0.5 ? -1 : 1) * (34 + rand() * 255), 0.78, fieldMaxZ - 34 - rand() * (field.depth - 84));
     crate.rotation.y = rand() * Math.PI;
     crate.castShadow = true;
     crate.receiveShadow = true;
@@ -234,10 +241,10 @@ export function makeBattlefield() {
   }
 
   const barrierMaterial = new THREE.MeshStandardMaterial({ color: 0x54564e, roughness: 0.86, metalness: 0.05 });
-  for (let i = 0; i < 18; i += 1) {
+  for (let i = 0; i < 42; i += 1) {
     for (const side of [-1, 1]) {
       const barrier = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.85, 0.8), barrierMaterial);
-      barrier.position.set(side * (20 + (i % 3) * 3.2), 0.45, 44 - i * 11);
+      barrier.position.set(side * (22 + (i % 3) * 3.8), 0.45, 62 - i * 11.4);
       barrier.rotation.y = side * (0.35 + (i % 2) * 0.22);
       barrier.castShadow = true;
       barrier.receiveShadow = true;
@@ -253,9 +260,9 @@ export function makeBattlefield() {
     side: THREE.DoubleSide,
     depthWrite: false,
   });
-  for (let i = 0; i < 28; i += 1) {
+  for (let i = 0; i < 90; i += 1) {
     const crater = new THREE.Mesh(new THREE.RingGeometry(1.5 + rand() * 1.2, 2.2 + rand() * 1.8, 32), scorchMaterial.clone());
-    crater.position.set((rand() - 0.5) * 120, 0.11, 42 - rand() * 190);
+    crater.position.set((rand() - 0.5) * 520, 0.11, fieldMaxZ - 46 - rand() * (field.depth - 120));
     crater.rotation.x = -Math.PI / 2;
     crater.rotation.z = rand() * Math.PI;
     group.add(crater);
@@ -263,7 +270,7 @@ export function makeBattlefield() {
 
   const towerMaterial = new THREE.MeshStandardMaterial({ color: 0x2d3936, roughness: 0.76, metalness: 0.22 });
   for (const side of [-1, 1]) {
-    for (let i = 0; i < 6; i += 1) {
+    for (let i = 0; i < 9; i += 1) {
       const tower = new THREE.Group();
       const mast = new THREE.Mesh(new THREE.BoxGeometry(0.35, 6 + i, 0.35), towerMaterial);
       mast.position.y = 3 + i * 0.5;
@@ -281,7 +288,7 @@ export function makeBattlefield() {
       const light = new THREE.PointLight(i % 2 ? 0xffd166 : 0x43e0ff, 0.72, 24);
       light.position.copy(beacon.position);
       tower.add(light);
-      tower.position.set(side * (38 + i * 10), 0, 34 - i * 32);
+      tower.position.set(side * (54 + i * 25), 0, 70 - i * 58);
       group.add(tower);
       navBlockers.push({ x: tower.position.x, z: tower.position.z, radius: 1.1 });
     }
@@ -298,15 +305,15 @@ export function makeBattlefield() {
   dishBowl.position.set(0, 5.2, 0);
   dishBowl.rotation.x = -0.75;
   dish.add(dishBowl);
-  dish.position.set(-62, 0, -118);
+  dish.position.set(-226, 0, -348);
   dish.rotation.y = 0.8;
   group.add(dish);
   navBlockers.push({ x: dish.position.x, z: dish.position.z, radius: 5.4 });
 
   const ridgeMaterial = new THREE.MeshStandardMaterial({ color: 0x101412, roughness: 0.96, metalness: 0.02 });
-  for (let i = 0; i < 18; i += 1) {
+  for (let i = 0; i < 34; i += 1) {
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(2.5 + rand() * 4.5, 0), ridgeMaterial);
-    rock.position.set(-118 + i * 14 + rand() * 4, 1.4, -165 - rand() * 18);
+    rock.position.set(-300 + i * 18 + rand() * 8, 1.4, fieldMinZ + 22 - rand() * 30);
     rock.scale.set(1.2 + rand() * 1.8, 0.45 + rand() * 0.9, 0.8 + rand());
     rock.rotation.set(rand() * 0.4, rand() * Math.PI, rand() * 0.3);
     rock.castShadow = true;
@@ -318,7 +325,7 @@ export function makeBattlefield() {
     new THREE.SphereGeometry(9, 36, 18),
     new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.22 }),
   );
-  moon.position.set(54, 46, -142);
+  moon.position.set(124, 62, -430);
   group.add(moon);
 
   const moonHalo = new THREE.Mesh(
@@ -329,7 +336,7 @@ export function makeBattlefield() {
   moonHalo.lookAt(0, 20, 0);
   group.add(moonHalo);
 
-  group.add(makeStarfield(rand));
+  group.add(makeStarfield(rand, field));
   group.userData.navBlockers = navBlockers;
 
   return group;
@@ -695,7 +702,7 @@ function makeArmorTexture(key, baseColor, accentColor) {
   return texture;
 }
 
-function makeGroundMaterial() {
+function makeGroundMaterial(width = 280, depth = 380) {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
   canvas.height = 512;
@@ -741,7 +748,7 @@ function makeGroundMaterial() {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(7, 10);
+  texture.repeat.set(width / 40, depth / 38);
 
   return new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -751,14 +758,14 @@ function makeGroundMaterial() {
   });
 }
 
-function makeStarfield(rand) {
-  const count = 420;
+function makeStarfield(rand, field = { width: 280, depth: 380, centerZ: -48 }) {
+  const count = 760;
   const geometry = new THREE.BufferGeometry();
   const positions = new Float32Array(count * 3);
   for (let i = 0; i < count; i += 1) {
-    positions[i * 3] = (rand() - 0.5) * 260;
+    positions[i * 3] = (rand() - 0.5) * field.width * 1.4;
     positions[i * 3 + 1] = 42 + rand() * 96;
-    positions[i * 3 + 2] = -36 - rand() * 250;
+    positions[i * 3 + 2] = field.centerZ + field.depth * 0.38 - rand() * field.depth * 1.08;
   }
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   const material = new THREE.PointsMaterial({
