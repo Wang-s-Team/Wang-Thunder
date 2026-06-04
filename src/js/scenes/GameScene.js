@@ -16,6 +16,12 @@ const ARENA = { x: 44, zMin: -96, zMax: 42 };
 const BASE_RADIUS = 16;
 const BASE_CAPTURE_SECONDS = 6;
 const CIWS_RATE_PER_SECOND = 13000 / 60;
+const ENERGY_MAX = 100;
+const ENERGY_RECHARGE_PER_SECOND = 34;
+const ENERGY_MOVE_PER_SECOND = 8.5;
+const ENERGY_SPRINT_EXTRA_PER_SECOND = 5;
+const ENERGY_SHOT_COST = 16;
+const ENERGY_CIWS_ROUND_COST = 0.06;
 const MODES = {
   pve: { name: "人机对战", controllers: ["human1", "ai"], phase: "玩家一号 VS AI" },
   pvp: { name: "本地双人", controllers: ["human1", "human2"], phase: "本地双人对战" },
@@ -216,10 +222,12 @@ export class GameScene {
       z,
       heading,
       health: 100,
+      energy: ENERGY_MAX,
       score: 0,
       hits: 0,
       cooldown: 0.8,
       invincible: 0,
+      energyBlockCooldown: 0,
       alive: true,
       group,
       velocity: new THREE.Vector3(),
@@ -256,15 +264,21 @@ export class GameScene {
   updateVehicle(vehicle, dt) {
     const enemy = this.enemyOf(vehicle);
     if (!enemy) return;
+    vehicle.energyBlockCooldown = Math.max(0, vehicle.energyBlockCooldown - dt);
+    this.updateKettleEnergy(vehicle, dt);
     if (vehicle.controller === "human1") {
       this.updateFirstPersonVehicle(vehicle, enemy, dt);
       return;
     }
 
-    const axis = vehicle.controller === "ai" ? this.aiAxis(vehicle, enemy) : this.input.axisFor(vehicle.id);
+    let axis = vehicle.controller === "ai" ? this.aiAxis(vehicle, enemy) : this.input.axisFor(vehicle.id);
     const aimPoint = this.aimPointFor(vehicle, enemy);
     const length = Math.hypot(axis.x, axis.y) || 1;
     const speed = vehicle.controller === "ai" ? 16.4 : 18.2;
+    const wantsMove = Math.hypot(axis.x, axis.y) > 0.05;
+    if (wantsMove && !this.trySpendMoveEnergy(vehicle, dt, false)) {
+      axis = { x: 0, y: 0 };
+    }
     const dx = (axis.x / length) * speed * dt;
     const dz = (axis.y / length) * speed * dt;
     vehicle.x = THREE.MathUtils.clamp(vehicle.x + dx, -ARENA.x, ARENA.x);
@@ -302,9 +316,11 @@ export class GameScene {
       move.addScaledVector(forward, -axis.y / moveLength);
     }
 
-    const speed = this.input.isSprinting() ? 25.5 : 18.8;
-    const dx = move.x * speed * dt;
-    const dz = move.z * speed * dt;
+    const sprinting = this.input.isSprinting();
+    const speed = sprinting ? 25.5 : 18.8;
+    const canMove = moveLength <= 0 || this.trySpendMoveEnergy(vehicle, dt, sprinting);
+    const dx = canMove ? move.x * speed * dt : 0;
+    const dz = canMove ? move.z * speed * dt : 0;
     vehicle.x = THREE.MathUtils.clamp(vehicle.x + dx, -ARENA.x, ARENA.x);
     vehicle.z = THREE.MathUtils.clamp(vehicle.z + dz, ARENA.zMin, ARENA.zMax);
     vehicle.velocity.set(dx / Math.max(dt, 0.001), 0, dz / Math.max(dt, 0.001));
@@ -314,7 +330,7 @@ export class GameScene {
     vehicle.group.rotation.y = vehicle.heading;
     vehicle.group.rotation.z = THREE.MathUtils.clamp(-axis.x * 0.035, -0.05, 0.05);
 
-    if (moveLength > 0) {
+    if (moveLength > 0 && canMove) {
       this.firstPerson.bob += dt * (this.input.isSprinting() ? 12 : 8);
     } else {
       this.firstPerson.bob = THREE.MathUtils.lerp(this.firstPerson.bob, 0, Math.min(1, dt * 4));
@@ -387,6 +403,16 @@ export class GameScene {
   }
 
   aiAxis(vehicle, enemy) {
+    const ownBase = this.baseOf(vehicle);
+    if (ownBase && vehicle.energy < 28 && !this.isInsideBase(vehicle, ownBase)) {
+      const bx = ownBase.x - vehicle.x;
+      const bz = ownBase.z - vehicle.z;
+      const distance = Math.hypot(bx, bz) || 1;
+      return { x: bx / distance, y: bz / distance };
+    }
+    if (ownBase && vehicle.energy < 96 && this.isInsideBase(vehicle, ownBase)) {
+      return { x: 0, y: 0 };
+    }
     const dx = enemy.x - vehicle.x;
     const dz = enemy.z - vehicle.z;
     const distance = Math.hypot(dx, dz) || 1;
@@ -413,6 +439,7 @@ export class GameScene {
     if (vehicle.cooldown > 0 || !vehicle.alive) return;
     const flatAim = new THREE.Vector3(aimPoint.x - vehicle.x, 0, aimPoint.z - vehicle.z);
     if (flatAim.lengthSq() < 0.5) return;
+    if (!this.trySpendShotEnergy(vehicle)) return;
     const direction = flatAim.normalize();
     const start = new THREE.Vector3(vehicle.x, 2.25, vehicle.z).addScaledVector(direction, 4.0);
     const target = new THREE.Vector3(aimPoint.x, 2.05, aimPoint.z);
@@ -439,6 +466,7 @@ export class GameScene {
 
   fireFirstPerson(vehicle, enemy) {
     if (vehicle.cooldown > 0 || !vehicle.alive) return;
+    if (!this.trySpendShotEnergy(vehicle)) return;
     const direction = this.firstPersonDirection();
     const start = this.eyePositionFor(vehicle).addScaledVector(direction, 1.25);
     const projectile = new THREE.Mesh(
@@ -542,7 +570,7 @@ export class GameScene {
     base.ciwsAccumulator -= shots;
 
     for (let i = 0; i < shots; i += 1) {
-      this.fireCiwsRound(base, owner, aimPoint, i);
+      if (!this.fireCiwsRound(base, owner, aimPoint, i)) break;
     }
   }
 
@@ -558,6 +586,9 @@ export class GameScene {
   }
 
   fireCiwsRound(base, owner, aimPoint, index) {
+    if (!this.spendEnergy(owner, ENERGY_CIWS_ROUND_COST, "近防炮能量不足，基地锅炉烧开水中")) {
+      return false;
+    }
     const muzzlePosition = new THREE.Vector3();
     base.muzzle.getWorldPosition(muzzlePosition);
     const jitter = new THREE.Vector3((Math.random() - 0.5) * 1.1, 0, (Math.random() - 0.5) * 1.1);
@@ -590,6 +621,7 @@ export class GameScene {
       this.addFlash(muzzlePosition, shotDirection);
       this.audio.beep({ frequency: 980 + base.ownerId * 80, duration: 0.018, type: "square", gain: 0.014 });
     }
+    return true;
   }
 
   updateEffects(dt) {
@@ -699,17 +731,19 @@ export class GameScene {
     this.elements.score.textContent = `${p1.hits}:${p2.hits}`;
     this.elements.wave.textContent = seconds;
     this.elements.healthBar.style.width = `${p1.health}%`;
-    this.elements.chargeBar.style.width = `${p2.health}%`;
+    this.elements.chargeBar.style.width = `${p1.energy}%`;
     this.elements.bearing.textContent = `方位 ${Math.round((p1.heading * 180) / Math.PI + 360) % 360}`;
     this.elements.missionPhase.textContent = this.modeInfo.phase;
     this.elements.altitude.textContent = `距离 ${Math.round(distanceXZ(p1, p2))} m`;
-    this.elements.weaponState.textContent = `P1 ${Math.round(p1.health)}% 生命 · ${this.baseStatusFor(p1)}`;
-    this.elements.comboState.textContent = `P2 ${Math.round(p2.health)}% 生命 · ${this.baseStatusFor(p2)}`;
+    this.elements.weaponState.textContent = `P1 ${Math.round(p1.health)}% 生命 · ${this.energyStatusFor(p1)}`;
+    this.elements.comboState.textContent = `P2 ${Math.round(p2.health)}% 生命 · ${this.energyStatusFor(p2)}`;
     this.elements.systemState.textContent = this.paused
       ? "暂停"
-      : this.input.pointerLocked
-        ? "鼠标锁定"
-        : "点击画面锁定鼠标";
+      : this.isBoilingKettle(p1)
+        ? "基地烧开水补能"
+        : this.input.pointerLocked
+          ? "鼠标锁定"
+          : "点击画面锁定鼠标";
     this.elements.radioLine.textContent = this.radio;
     this.elements.hitMarker.classList.toggle("hit-marker--active", this.hitTimer > 0);
     this.elements.damageVignette.style.opacity = String(Math.min(0.62, this.damageFlash));
@@ -815,11 +849,48 @@ export class GameScene {
     return this.bases.find((base) => base.ownerId === vehicle.id);
   }
 
-  baseStatusFor(vehicle) {
+  energyStatusFor(vehicle) {
     const base = this.baseOf(vehicle);
     const capture = Math.round((base?.capture ?? 0) * 100);
-    const inside = base && this.isInsideBase(vehicle, base);
-    return `${inside ? "基地内" : "野外"} / 基地${capture}%`;
+    const kettle = this.isBoilingKettle(vehicle);
+    return `${Math.round(vehicle.energy)}% 能量 · ${kettle ? "烧开水" : "锅炉离线"} · 基地${capture}%`;
+  }
+
+  isBoilingKettle(vehicle) {
+    const base = this.baseOf(vehicle);
+    return Boolean(vehicle?.alive && base && this.isInsideBase(vehicle, base) && vehicle.energy < ENERGY_MAX);
+  }
+
+  updateKettleEnergy(vehicle, dt) {
+    const base = this.baseOf(vehicle);
+    if (!base || !this.isInsideBase(vehicle, base)) return;
+    const previous = vehicle.energy;
+    vehicle.energy = Math.min(ENERGY_MAX, vehicle.energy + ENERGY_RECHARGE_PER_SECOND * dt);
+    if (previous < 35 && vehicle.energy >= 35) {
+      this.pushLog(`${vehicle.name} 基地烧开水完成，能量恢复`);
+    }
+  }
+
+  trySpendMoveEnergy(vehicle, dt, sprinting) {
+    const cost = (ENERGY_MOVE_PER_SECOND + (sprinting ? ENERGY_SPRINT_EXTRA_PER_SECOND : 0)) * dt;
+    return this.spendEnergy(vehicle, cost, `${vehicle.name} 能量不足，回基地烧开水后才能移动`);
+  }
+
+  trySpendShotEnergy(vehicle) {
+    return this.spendEnergy(vehicle, ENERGY_SHOT_COST, `${vehicle.name} 能量不足，回基地烧开水后才能开枪`);
+  }
+
+  spendEnergy(vehicle, amount, message) {
+    if (vehicle.energy < amount) {
+      vehicle.energy = Math.max(0, vehicle.energy);
+      if (vehicle.energyBlockCooldown <= 0) {
+        this.pushLog(message);
+        vehicle.energyBlockCooldown = 1.2;
+      }
+      return false;
+    }
+    vehicle.energy = Math.max(0, vehicle.energy - amount);
+    return true;
   }
 
   isInsideBase(vehicle, base) {
