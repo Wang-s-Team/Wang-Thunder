@@ -12,6 +12,7 @@ export class Input {
     };
     this.mouseDelta = { x: 0, y: 0 };
     this.starlinkPulse = { 1: false, 2: false };
+    this.antiAirPulse = { 1: false, 2: false };
     this.bearingPulse = { 1: false, 2: false };
     this.shiftPulse = false;
     this.pausePulse = false;
@@ -25,6 +26,12 @@ export class Input {
       }
       if (key === ".") {
         this.starlinkPulse[2] = true;
+      }
+      if (key === "f") {
+        this.antiAirPulse[1] = true;
+      }
+      if (key === "0") {
+        this.antiAirPulse[2] = true;
       }
       if (key === "r") {
         this.bearingPulse[1] = true;
@@ -171,6 +178,12 @@ export class Input {
   consumeStarlinkFor(player) {
     const value = this.starlinkPulse[player];
     this.starlinkPulse[player] = false;
+    return value;
+  }
+
+  consumeAntiAirFor(player) {
+    const value = this.antiAirPulse[player];
+    this.antiAirPulse[player] = false;
     return value;
   }
 
