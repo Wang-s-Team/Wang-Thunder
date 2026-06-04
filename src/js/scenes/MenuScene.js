@@ -13,8 +13,19 @@ export class MenuScene {
       this.audio.beep({ frequency: 220, duration: 0.12, type: "sawtooth", gain: 0.06 });
       this.manager.go("game", { mode });
     };
-    this.onBriefing = () => this.elements.briefing.classList.add("screen--active");
+    this.onBriefing = () => {
+      this.elements.briefing.classList.add("screen--active");
+      this.elements.closeBriefing.focus();
+    };
     this.onClose = () => this.elements.briefing.classList.remove("screen--active");
+    this.onBriefingBackdrop = (event) => {
+      if (event.target === this.elements.briefing) this.onClose();
+    };
+    this.onKeydown = (event) => {
+      if (event.key === "Escape" && this.elements.briefing.classList.contains("screen--active")) {
+        this.onClose();
+      }
+    };
   }
 
   enter() {
@@ -29,6 +40,8 @@ export class MenuScene {
     this.elements.aiBtn.addEventListener("click", this.onMode);
     this.elements.howBtn.addEventListener("click", this.onBriefing);
     this.elements.closeBriefing.addEventListener("click", this.onClose);
+    this.elements.briefing.addEventListener("click", this.onBriefingBackdrop);
+    window.addEventListener("keydown", this.onKeydown);
     this.resize(this.canvas.clientWidth || window.innerWidth, this.canvas.clientHeight || window.innerHeight);
   }
 
@@ -40,6 +53,8 @@ export class MenuScene {
     this.elements.aiBtn.removeEventListener("click", this.onMode);
     this.elements.howBtn.removeEventListener("click", this.onBriefing);
     this.elements.closeBriefing.removeEventListener("click", this.onClose);
+    this.elements.briefing.removeEventListener("click", this.onBriefingBackdrop);
+    window.removeEventListener("keydown", this.onKeydown);
   }
 
   update() {}
