@@ -7,7 +7,8 @@ import {
   makeExplosion,
   makeLabelSprite,
   makeMuzzleFlash,
-  makeCombatant,
+  makeHumanCombatant,
+  makeTank,
   makeTracer,
 } from "../core/threeFactories.js";
 
@@ -223,7 +224,8 @@ export class GameScene {
   }
 
   createVehicle({ id, name, controller, color, accent, x, z, heading }) {
-    const group = makeCombatant({ color, accent });
+    const isPlayerSide = id === 1;
+    const group = isPlayerSide ? makeHumanCombatant({ color, accent }) : makeTank({ color, accent });
     const label = makeLabelSprite(`${id === 1 ? "P1" : "P2"} ${controller === "ai" ? "AI" : "HUM"}`, accent);
     label.position.y = 4.15;
     label.scale.set(4.2, 1.28, 1);
@@ -252,6 +254,7 @@ export class GameScene {
       slipPhase: 0,
       slipSpin: 0,
       alive: true,
+      modelType: isPlayerSide ? "human" : "tank",
       group,
       velocity: new THREE.Vector3(),
       blastVelocity: new THREE.Vector3(),

@@ -1,5 +1,5 @@
 import * as THREE from "../../vendor/three.module.js";
-import { makeCombatant } from "../core/threeFactories.js";
+import { makeHumanCombatant } from "../core/threeFactories.js";
 
 export class MenuScene {
   constructor({ canvas, elements, storage, audio }) {
@@ -108,7 +108,7 @@ function createMenuWorld() {
   grid.material.transparent = true;
   scene.add(grid);
 
-  const vehicle = makeCombatant({ color: 0x2f5f78, accent: 0xffd166 });
+  const vehicle = makeHumanCombatant({ color: 0x2f5f78, accent: 0xffd166 });
   vehicle.position.set(-1.2, 0, 0);
   vehicle.scale.setScalar(2.25);
   scene.add(vehicle);
