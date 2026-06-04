@@ -24,11 +24,15 @@ const ENERGY_MOVE_PER_SECOND = 4.2;
 const ENERGY_SPRINT_EXTRA_PER_SECOND = 3;
 const ENERGY_SHOT_COST = 16;
 const ENERGY_DYNAMITE_COST = 38;
+const ENERGY_BEARING_COST = 24;
 const ENERGY_CIWS_ROUND_COST = 0.06;
 const DYNAMITE_RADIUS = 10.5;
 const DYNAMITE_DAMAGE = 18;
 const DYNAMITE_KNOCKBACK = 50;
 const DYNAMITE_LIFT = 13;
+const BEARING_DAMAGE = 7;
+const BEARING_SLIP_SECONDS = 2.6;
+const BEARING_SLIP_IMPULSE = 30;
 const BLAST_GRAVITY = 34;
 const STARLINK_COOLDOWN_SECONDS = 18;
 const MODES = {
@@ -140,7 +144,7 @@ export class GameScene {
     this.elements.hud.classList.add("hud--first-person");
     this.elements.pause.classList.remove("pause-layer--active");
     this.pushLog(`${this.modeInfo.name} 已启动`);
-    this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 发射雷管，E 呼叫星链");
+    this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 雷管，R 发射滚珠轴承，E 呼叫星链");
     this.resize(window.innerWidth, window.innerHeight);
     this.updateHud();
   }
@@ -244,10 +248,14 @@ export class GameScene {
       starlinkCooldown: 0,
       invincible: 0,
       energyBlockCooldown: 0,
+      slipTimer: 0,
+      slipPhase: 0,
+      slipSpin: 0,
       alive: true,
       group,
       velocity: new THREE.Vector3(),
       blastVelocity: new THREE.Vector3(),
+      slipVelocity: new THREE.Vector3(),
       verticalVelocity: 0,
       air: 0,
       aimPoint: new THREE.Vector3(x, 0, z),
@@ -284,6 +292,8 @@ export class GameScene {
     const enemy = this.enemyOf(vehicle);
     if (!enemy) return;
     vehicle.energyBlockCooldown = Math.max(0, vehicle.energyBlockCooldown - dt);
+    vehicle.slipTimer = Math.max(0, vehicle.slipTimer - dt);
+    vehicle.slipPhase += dt * (vehicle.slipTimer > 0 ? 14 : 4);
     this.updateKettleEnergy(vehicle, dt);
     if (vehicle.controller === "human1") {
       this.updateFirstPersonVehicle(vehicle, enemy, dt);
@@ -295,11 +305,12 @@ export class GameScene {
     const length = Math.hypot(axis.x, axis.y) || 1;
     const speed = vehicle.controller === "ai" ? 16.4 : 18.2;
     const wantsMove = Math.hypot(axis.x, axis.y) > 0.05;
+    const slipControl = this.slipControlFor(vehicle);
     if (wantsMove && !this.trySpendMoveEnergy(vehicle, dt, false)) {
       axis = { x: 0, y: 0 };
     }
-    const dx = (axis.x / length) * speed * dt;
-    const dz = (axis.y / length) * speed * dt;
+    const dx = (axis.x / length) * speed * slipControl * dt;
+    const dz = (axis.y / length) * speed * slipControl * dt;
     vehicle.x = THREE.MathUtils.clamp(vehicle.x + dx, -ARENA.x, ARENA.x);
     vehicle.z = THREE.MathUtils.clamp(vehicle.z + dz, ARENA.zMin, ARENA.zMax);
     vehicle.velocity.set(dx / Math.max(dt, 0.001), 0, dz / Math.max(dt, 0.001));
@@ -307,19 +318,32 @@ export class GameScene {
     vehicle.aimPoint.copy(aimPoint);
     const aim = angleToTarget(vehicle, aimPoint);
     vehicle.heading = lerpAngle(vehicle.heading, aim, Math.min(1, dt * 4.2));
+    if (vehicle.slipTimer > 0) {
+      vehicle.heading = wrapAngle(vehicle.heading + vehicle.slipSpin * dt * 0.38);
+    }
+    this.applySlipMotion(vehicle, dt);
     this.applyBlastMotion(vehicle, dt);
     this.resolveVehicleCoverCollision(vehicle);
     vehicle.group.position.set(vehicle.x, vehicle.air, vehicle.z);
     vehicle.group.rotation.y = vehicle.heading;
-    vehicle.group.rotation.x = THREE.MathUtils.clamp(-vehicle.blastVelocity.z * 0.006, -0.22, 0.22);
-    vehicle.group.rotation.z = THREE.MathUtils.clamp(-axis.x * 0.035 + vehicle.blastVelocity.x * 0.005, -0.18, 0.18);
+    vehicle.group.rotation.x = THREE.MathUtils.clamp(
+      -vehicle.blastVelocity.z * 0.006 + this.slipWobbleFor(vehicle, 0.1),
+      -0.28,
+      0.28,
+    );
+    vehicle.group.rotation.z = THREE.MathUtils.clamp(
+      -axis.x * 0.035 + vehicle.blastVelocity.x * 0.005 + this.slipWobbleFor(vehicle, 0.16),
+      -0.28,
+      0.28,
+    );
 
     const wantsDynamite =
       vehicle.controller === "ai" ? this.aiWantsDynamite(vehicle, enemy) : this.input.wantsDynamiteFor(vehicle.id);
-    const wantsFire = vehicle.controller === "ai" ? this.aiWantsFire(vehicle, enemy) : this.input.wantsFireFor(vehicle.id);
     if (wantsDynamite) {
       this.fireDynamite(vehicle, predictedAimPoint(enemy, 0.42));
-    } else if (wantsFire) {
+    } else if (vehicle.controller === "ai" ? this.aiWantsBearing(vehicle, enemy) : this.input.consumeBearingFor(vehicle.id)) {
+      this.fireBearing(vehicle, predictedAimPoint(enemy, 0.2));
+    } else if (vehicle.controller === "ai" ? this.aiWantsFire(vehicle, enemy) : this.input.wantsFireFor(vehicle.id)) {
       this.fire(vehicle, enemy, aimPoint);
     }
   }
@@ -333,6 +357,9 @@ export class GameScene {
       -0.52,
       0.42,
     );
+    if (vehicle.slipTimer > 0) {
+      this.firstPerson.yaw = wrapAngle(this.firstPerson.yaw + vehicle.slipSpin * dt * 0.22);
+    }
 
     const axis = this.input.axisFor(vehicle.id);
     const moveLength = Math.hypot(axis.x, axis.y);
@@ -347,19 +374,29 @@ export class GameScene {
     const sprinting = this.input.isSprinting();
     const speed = sprinting ? 25.5 : 18.8;
     const canMove = moveLength <= 0 || this.trySpendMoveEnergy(vehicle, dt, sprinting);
-    const dx = canMove ? move.x * speed * dt : 0;
-    const dz = canMove ? move.z * speed * dt : 0;
+    const slipControl = this.slipControlFor(vehicle);
+    const dx = canMove ? move.x * speed * slipControl * dt : 0;
+    const dz = canMove ? move.z * speed * slipControl * dt : 0;
     vehicle.x = THREE.MathUtils.clamp(vehicle.x + dx, -ARENA.x, ARENA.x);
     vehicle.z = THREE.MathUtils.clamp(vehicle.z + dz, ARENA.zMin, ARENA.zMax);
     vehicle.velocity.set(dx / Math.max(dt, 0.001), 0, dz / Math.max(dt, 0.001));
     vehicle.heading = this.firstPerson.yaw;
     vehicle.aimPoint.copy(this.centerAimPoint(vehicle));
+    this.applySlipMotion(vehicle, dt);
     this.applyBlastMotion(vehicle, dt);
     this.resolveVehicleCoverCollision(vehicle);
     vehicle.group.position.set(vehicle.x, vehicle.air, vehicle.z);
     vehicle.group.rotation.y = vehicle.heading;
-    vehicle.group.rotation.x = THREE.MathUtils.clamp(-vehicle.blastVelocity.z * 0.006, -0.22, 0.22);
-    vehicle.group.rotation.z = THREE.MathUtils.clamp(-axis.x * 0.035 + vehicle.blastVelocity.x * 0.005, -0.18, 0.18);
+    vehicle.group.rotation.x = THREE.MathUtils.clamp(
+      -vehicle.blastVelocity.z * 0.006 + this.slipWobbleFor(vehicle, 0.1),
+      -0.28,
+      0.28,
+    );
+    vehicle.group.rotation.z = THREE.MathUtils.clamp(
+      -axis.x * 0.035 + vehicle.blastVelocity.x * 0.005 + this.slipWobbleFor(vehicle, 0.16),
+      -0.28,
+      0.28,
+    );
 
     if (moveLength > 0 && canMove) {
       this.firstPerson.bob += dt * (this.input.isSprinting() ? 12 : 8);
@@ -369,6 +406,8 @@ export class GameScene {
 
     if (this.input.wantsDynamiteFor(vehicle.id)) {
       this.fireDynamiteFirstPerson(vehicle);
+    } else if (this.input.consumeBearingFor(vehicle.id)) {
+      this.fireBearingFirstPerson(vehicle);
     } else if (this.input.wantsFireFor(vehicle.id)) {
       this.fireFirstPerson(vehicle, enemy);
     }
@@ -477,6 +516,15 @@ export class GameScene {
     return facing.dot(toEnemy) > 0.86 && Math.random() < 0.18;
   }
 
+  aiWantsBearing(vehicle, enemy) {
+    if (vehicle.cooldown > 0 || vehicle.energy < ENERGY_BEARING_COST) return false;
+    const distance = distanceXZ(vehicle, enemy);
+    if (distance < 16 || distance > 135 || enemy.slipTimer > 0.9) return false;
+    const facing = forwardFromHeading(vehicle.heading);
+    const toEnemy = new THREE.Vector3(enemy.x - vehicle.x, 0, enemy.z - vehicle.z).normalize();
+    return facing.dot(toEnemy) > 0.82 && Math.random() < 0.12;
+  }
+
   fire(vehicle, enemy, aimPoint = predictedAimPoint(enemy, 0.16)) {
     if (vehicle.cooldown > 0 || !vehicle.alive) return;
     const flatAim = new THREE.Vector3(aimPoint.x - vehicle.x, 0, aimPoint.z - vehicle.z);
@@ -559,6 +607,32 @@ export class GameScene {
     this.shake = Math.max(this.shake, 0.55);
   }
 
+  fireBearing(vehicle, aimPoint) {
+    if (vehicle.cooldown > 0 || !vehicle.alive) return;
+    const flatAim = new THREE.Vector3(aimPoint.x - vehicle.x, 0, aimPoint.z - vehicle.z);
+    if (flatAim.lengthSq() < 0.5) return;
+    if (!this.trySpendBearingEnergy(vehicle)) return;
+    const direction = flatAim.normalize();
+    const start = new THREE.Vector3(vehicle.x, 2.28 + vehicle.air, vehicle.z).addScaledVector(direction, 3.45);
+    const target = new THREE.Vector3(aimPoint.x, 1.45, aimPoint.z);
+    const shotDirection = target.sub(start).normalize();
+    this.launchBearing(vehicle, start, shotDirection, 72);
+    vehicle.cooldown = vehicle.controller === "ai" ? 1.35 : 1.05;
+    this.shake = Math.max(this.shake, 0.32);
+  }
+
+  fireBearingFirstPerson(vehicle) {
+    if (vehicle.cooldown > 0 || !vehicle.alive) return;
+    if (!this.trySpendBearingEnergy(vehicle)) return;
+    const direction = this.firstPersonDirection();
+    const start = this.eyePositionFor(vehicle).addScaledVector(direction, 1.08);
+    this.launchBearing(vehicle, start, direction, 82);
+    vehicle.cooldown = 0.95;
+    vehicle.aimPoint.copy(this.centerAimPoint(vehicle));
+    this.firstPerson.recoil = Math.min(1, this.firstPerson.recoil + 0.45);
+    this.shake = Math.max(this.shake, 0.38);
+  }
+
   launchDynamite(vehicle, start, direction, speed) {
     const projectile = makeDynamiteProjectile(vehicle.accent);
     projectile.position.copy(start);
@@ -578,6 +652,24 @@ export class GameScene {
     this.audio.beep({ frequency: vehicle.id === 1 ? 310 : 280, duration: 0.09, type: "sawtooth", gain: 0.034 });
   }
 
+  launchBearing(vehicle, start, direction, speed) {
+    const projectile = makeBearingProjectile(vehicle.accent);
+    projectile.position.copy(start);
+    projectile.userData = {
+      owner: vehicle.id,
+      velocity: direction.clone().multiplyScalar(speed),
+      life: 2.35,
+      damage: BEARING_DAMAGE,
+      bearing: true,
+      spin: 7 + Math.random() * 6,
+    };
+    this.scene.add(projectile);
+    this.projectiles.push(projectile);
+    this.addTracer(start, start.clone().addScaledVector(direction, 5.4), 0xc6ccd0);
+    this.addFlash(start.clone().addScaledVector(direction, 0.3), direction);
+    this.audio.beep({ frequency: vehicle.id === 1 ? 760 : 690, duration: 0.055, type: "square", gain: 0.026 });
+  }
+
   aimQualityForFirstPerson(enemy) {
     if (!enemy) return 0;
     const p1 = this.vehicles?.[0];
@@ -594,6 +686,10 @@ export class GameScene {
       if (projectile.userData.dynamite) {
         projectile.rotation.z += dt * 11;
         projectile.rotation.x += dt * 3.5;
+      }
+      if (projectile.userData.bearing) {
+        projectile.rotation.x += dt * projectile.userData.spin;
+        projectile.rotation.z += dt * projectile.userData.spin * 0.7;
       }
 
       const coverImpact = projectile.userData.life > 0 ? this.projectileCoverImpact(projectile, previousPosition) : null;
@@ -764,6 +860,10 @@ export class GameScene {
         continue;
       }
       const owner = this.vehicles.find((vehicle) => vehicle.id === projectile.userData.owner);
+      if (projectile.userData.bearing) {
+        this.applyBearingHit(projectile, target, owner);
+        continue;
+      }
       projectile.userData.life = 0;
       target.health = Math.max(0, target.health - projectile.userData.damage);
       target.invincible = 0.35;
@@ -799,6 +899,39 @@ export class GameScene {
       if (this.input.consumeStarlinkFor(vehicle.id)) {
         this.tryActivateStarlink(vehicle);
       }
+    }
+  }
+
+  applyBearingHit(projectile, target, owner) {
+    projectile.userData.life = 0;
+    target.health = Math.max(0, target.health - projectile.userData.damage);
+    target.invincible = 0.3;
+    target.slipTimer = Math.max(target.slipTimer, BEARING_SLIP_SECONDS);
+    target.slipSpin = (Math.random() < 0.5 ? -1 : 1) * (1.8 + Math.random() * 1.4);
+
+    const slideDirection = projectile.userData.velocity.clone();
+    slideDirection.y = 0;
+    if (slideDirection.lengthSq() < 0.01 && owner) {
+      slideDirection.set(target.x - owner.x, 0, target.z - owner.z);
+    }
+    if (slideDirection.lengthSq() < 0.01) slideDirection.set(target.id === 1 ? -1 : 1, 0, 0);
+    slideDirection.normalize();
+    target.slipVelocity.addScaledVector(slideDirection, BEARING_SLIP_IMPULSE);
+
+    if (owner) {
+      owner.hits += 1;
+      owner.score += projectile.userData.damage * 18 + 420;
+      this.pushLog(`${owner.name} 发射滚珠轴承，${target.name} 滑倒`);
+    }
+    this.hitTimer = 0.34;
+    this.damageFlash = Math.max(this.damageFlash, target.controller.startsWith("human") ? 0.7 : 0.28);
+    this.shake = Math.max(this.shake, 0.75);
+    this.addBearingScatter(projectile.position.clone(), owner?.accent ?? 0xc6ccd0);
+    this.audio.beep({ frequency: 390, duration: 0.09, type: "triangle", gain: 0.036 });
+
+    if (target.health <= 0 && owner) {
+      target.alive = false;
+      this.finishRound(owner, "KNOCKOUT");
     }
   }
 
@@ -1132,7 +1265,8 @@ export class GameScene {
     const base = this.baseOf(vehicle);
     const capture = Math.round((base?.capture ?? 0) * 100);
     const kettle = this.isBoilingKettle(vehicle);
-    return `${Math.round(vehicle.energy)}% 能量 · ${kettle ? "烧开水" : "锅炉离线"} · 基地${capture}%`;
+    const slip = vehicle.slipTimer > 0 ? ` · 打滑${Math.ceil(vehicle.slipTimer)}s` : "";
+    return `${Math.round(vehicle.energy)}% 能量 · ${kettle ? "烧开水" : "锅炉离线"} · 基地${capture}%${slip}`;
   }
 
   isBoilingKettle(vehicle) {
@@ -1161,6 +1295,10 @@ export class GameScene {
 
   trySpendDynamiteEnergy(vehicle) {
     return this.spendEnergy(vehicle, ENERGY_DYNAMITE_COST, `${vehicle.name} 能量不足，回基地烧开水后才能发射雷管`);
+  }
+
+  trySpendBearingEnergy(vehicle) {
+    return this.spendEnergy(vehicle, ENERGY_BEARING_COST, `${vehicle.name} 能量不足，回基地烧开水后才能发射滚珠轴承`);
   }
 
   spendEnergy(vehicle, amount, message) {
@@ -1286,6 +1424,30 @@ export class GameScene {
     }
   }
 
+  applySlipMotion(vehicle, dt) {
+    if (vehicle.slipVelocity.lengthSq() <= 0.01) {
+      vehicle.slipVelocity.set(0, 0, 0);
+      return;
+    }
+
+    vehicle.x = THREE.MathUtils.clamp(vehicle.x + vehicle.slipVelocity.x * dt, -ARENA.x, ARENA.x);
+    vehicle.z = THREE.MathUtils.clamp(vehicle.z + vehicle.slipVelocity.z * dt, ARENA.zMin, ARENA.zMax);
+    vehicle.velocity.add(vehicle.slipVelocity);
+    const friction = vehicle.slipTimer > 0 ? 0.36 : 0.08;
+    vehicle.slipVelocity.multiplyScalar(Math.pow(friction, dt));
+  }
+
+  slipControlFor(vehicle) {
+    if (vehicle.slipTimer <= 0) return 1;
+    return 0.28 + 0.42 * (1 - vehicle.slipTimer / BEARING_SLIP_SECONDS);
+  }
+
+  slipWobbleFor(vehicle, amount) {
+    if (vehicle.slipTimer <= 0) return 0;
+    const strength = THREE.MathUtils.clamp(vehicle.slipTimer / BEARING_SLIP_SECONDS, 0, 1);
+    return Math.sin(vehicle.slipPhase) * amount * strength;
+  }
+
   addTrackDust() {
     for (const vehicle of this.vehicles) {
       if (!vehicle.alive || vehicle.velocity.length() < 2) continue;
@@ -1315,6 +1477,28 @@ export class GameScene {
     for (const spark of makeExplosion(position, color, amount)) {
       this.scene.add(spark);
       this.sparks.push(spark);
+    }
+  }
+
+  addBearingScatter(position, color) {
+    for (let i = 0; i < 18; i += 1) {
+      const bearing = new THREE.Mesh(
+        new THREE.SphereGeometry(0.08 + Math.random() * 0.05, 8, 6),
+        new THREE.MeshBasicMaterial({
+          color: i % 3 === 0 ? color : 0xc6ccd0,
+          transparent: true,
+          opacity: 0.88,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      bearing.position.copy(position);
+      bearing.position.y = Math.max(0.16, bearing.position.y - 0.85);
+      const direction = new THREE.Vector3(Math.random() - 0.5, 0.08 + Math.random() * 0.18, Math.random() - 0.5).normalize();
+      bearing.userData.velocity = direction.multiplyScalar(4 + Math.random() * 9);
+      bearing.userData.life = 0.58 + Math.random() * 0.24;
+      this.scene.add(bearing);
+      this.sparks.push(bearing);
     }
   }
 
@@ -1396,6 +1580,42 @@ function makeDynamiteProjectile(accent) {
   const spark = new THREE.PointLight(accent, 0.9, 8);
   spark.position.z = -0.55;
   group.add(spark);
+  return group;
+}
+
+function makeBearingProjectile(accent) {
+  const group = new THREE.Group();
+  const steelMaterial = new THREE.MeshStandardMaterial({
+    color: 0xbec5c9,
+    roughness: 0.26,
+    metalness: 0.92,
+  });
+  const accentMaterial = new THREE.MeshBasicMaterial({
+    color: accent,
+    transparent: true,
+    opacity: 0.72,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+
+  const core = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 12), steelMaterial);
+  group.add(core);
+
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.31, 0.035, 8, 24), steelMaterial);
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+
+  for (let i = 0; i < 6; i += 1) {
+    const angle = (i / 6) * Math.PI * 2;
+    const bead = new THREE.Mesh(new THREE.SphereGeometry(0.065, 8, 6), steelMaterial);
+    bead.position.set(Math.cos(angle) * 0.28, Math.sin(angle) * 0.28, 0);
+    group.add(bead);
+  }
+
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.38, 16, 10), accentMaterial);
+  group.add(glow);
+  const light = new THREE.PointLight(accent, 0.7, 6);
+  group.add(light);
   return group;
 }
 
