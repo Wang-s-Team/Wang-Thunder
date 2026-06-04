@@ -3,8 +3,10 @@ export class Input {
     this.canvas = canvas;
     this.keys = new Set();
     this.pointer = { x: window.innerWidth / 2, y: window.innerHeight / 2, down: false, firePulse: false, moved: false };
+    this.mouseDelta = { x: 0, y: 0 };
     this.shiftPulse = false;
     this.pausePulse = false;
+    this.pointerLocked = false;
 
     window.addEventListener("keydown", (event) => {
       const key = event.key.toLowerCase();
@@ -24,22 +26,62 @@ export class Input {
       this.keys.delete(event.key.toLowerCase());
     });
 
+    document.addEventListener("pointerlockchange", () => {
+      this.pointerLocked = document.pointerLockElement === this.canvas;
+      if (this.pointerLocked) {
+        this.centerPointer();
+      }
+    });
+
+    canvas.addEventListener("click", () => this.requestPointerLock());
     canvas.addEventListener("pointermove", (event) => this.updatePointer(event));
     canvas.addEventListener("pointerdown", (event) => {
+      this.requestPointerLock();
       this.updatePointer(event);
       this.pointer.down = true;
       this.pointer.firePulse = true;
     });
+    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     window.addEventListener("pointerup", () => {
       this.pointer.down = false;
     });
   }
 
   updatePointer(event) {
+    if (this.pointerLocked) {
+      this.mouseDelta.x += event.movementX || 0;
+      this.mouseDelta.y += event.movementY || 0;
+      this.centerPointer();
+      this.pointer.moved = true;
+      return;
+    }
     const rect = this.canvas.getBoundingClientRect();
     this.pointer.x = event.clientX - rect.left;
     this.pointer.y = event.clientY - rect.top;
     this.pointer.moved = true;
+  }
+
+  centerPointer() {
+    this.pointer.x = (this.canvas.clientWidth || window.innerWidth) / 2;
+    this.pointer.y = (this.canvas.clientHeight || window.innerHeight) / 2;
+  }
+
+  requestPointerLock() {
+    if (document.pointerLockElement || !this.canvas.requestPointerLock) return;
+    this.canvas.requestPointerLock();
+  }
+
+  releasePointerLock() {
+    if (document.pointerLockElement === this.canvas) {
+      document.exitPointerLock?.();
+    }
+  }
+
+  consumeMouseDelta() {
+    const delta = { ...this.mouseDelta };
+    this.mouseDelta.x = 0;
+    this.mouseDelta.y = 0;
+    return delta;
   }
 
   axis() {
@@ -82,6 +124,10 @@ export class Input {
   isFiringFor(player) {
     if (player === 2) return this.keys.has("enter") || this.keys.has("numpadenter");
     return this.keys.has(" ") || this.pointer.down;
+  }
+
+  isSprinting() {
+    return this.keys.has("shift");
   }
 
   consumeShift() {

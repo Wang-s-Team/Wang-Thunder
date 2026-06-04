@@ -370,19 +370,9 @@ h1 {
   display: block;
 }
 
-.hud--freecam .combat-top {
+.hud--radar-link .combat-top {
   border-color: rgba(255, 209, 102, 0.34);
   box-shadow: 0 0 28px rgba(255, 209, 102, 0.1);
-}
-
-.hud--freecam .reticle {
-  width: 132px;
-  height: 132px;
-  border-style: dashed;
-}
-
-.hud--freecam .target-lock {
-  min-width: 148px;
 }
 
 .hud__left,
@@ -666,13 +656,13 @@ h1 {
   background: rgba(5, 8, 12, 0.7);
 }
 
-.hud--freecam .radar::before {
+.hud--radar-link .radar::before {
   position: absolute;
   inset: 0;
   z-index: 1;
   display: grid;
   place-items: center;
-  content: "FREECAM\\A可见区";
+  content: "雷达链路\\A可见区";
   color: rgba(67, 224, 255, 0.86);
   font-size: 11px;
   font-weight: 950;
@@ -682,7 +672,7 @@ h1 {
   pointer-events: none;
 }
 
-.hud--freecam .radar--offline::before {
+.hud--radar-link .radar--offline::before {
   content: "基地外\\A离线";
   color: rgba(255, 209, 102, 0.9);
   background: rgba(5, 8, 12, 0.7);

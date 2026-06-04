@@ -1,4 +1,5 @@
 import * as THREE from "../../vendor/three.module.js";
+import { makeCombatant } from "../core/threeFactories.js";
 
 export class MenuScene {
   constructor({ canvas, elements, storage, audio }) {
@@ -92,8 +93,9 @@ function createMenuWorld() {
   grid.material.transparent = true;
   scene.add(grid);
 
-  const vehicle = createArmoredVehicle();
-  vehicle.position.set(-2, 1.15, 0);
+  const vehicle = makeCombatant({ color: 0x2f5f78, accent: 0xffd166 });
+  vehicle.position.set(-1.2, 0, 0);
+  vehicle.scale.setScalar(2.25);
   scene.add(vehicle);
 
   const radar = new THREE.Group();
@@ -126,42 +128,4 @@ function createMenuWorld() {
   }
 
   return { scene, camera, vehicle, radar, beacons };
-}
-
-function createArmoredVehicle() {
-  const group = new THREE.Group();
-  const hullMat = new THREE.MeshStandardMaterial({ color: 0x283542, roughness: 0.62, metalness: 0.5 });
-  const trimMat = new THREE.MeshStandardMaterial({ color: 0x141a20, roughness: 0.7, metalness: 0.35 });
-  const glowMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
-
-  const hull = new THREE.Mesh(new THREE.BoxGeometry(8.6, 1.7, 5.1), hullMat);
-  hull.castShadow = true;
-  hull.receiveShadow = true;
-  group.add(hull);
-
-  const turret = new THREE.Mesh(new THREE.BoxGeometry(4.5, 1.3, 3), hullMat);
-  turret.position.set(0.6, 1.25, -0.15);
-  turret.castShadow = true;
-  group.add(turret);
-
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, 7.4, 18), trimMat);
-  barrel.rotation.z = Math.PI / 2;
-  barrel.position.set(4.8, 1.45, -0.15);
-  barrel.castShadow = true;
-  group.add(barrel);
-
-  for (const z of [-2.9, 2.9]) {
-    const track = new THREE.Mesh(new THREE.BoxGeometry(9.2, 0.72, 0.9), trimMat);
-    track.position.set(0, -0.95, z);
-    track.castShadow = true;
-    group.add(track);
-  }
-
-  for (let i = 0; i < 5; i += 1) {
-    const light = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.8), glowMat);
-    light.position.set(-3.2 + i * 1.6, 0.3, 2.62);
-    group.add(light);
-  }
-
-  return group;
 }
