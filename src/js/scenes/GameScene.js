@@ -38,6 +38,10 @@ const BEARING_SLIP_IMPULSE = 30;
 const BLAST_GRAVITY = 34;
 const STARLINK_COOLDOWN_SECONDS = 18;
 const STARLINK_FLIGHT_SECONDS = 9.2;
+const STARLINK_CONTROLLED_LIFE_SECONDS = 12.5;
+const STARLINK_CONTROLLED_SPEED = 38;
+const STARLINK_CONTROLLED_HIT_RADIUS = 8.5;
+const STARLINK_CONTROLLED_IMPACT_HEIGHT = 10.5;
 const ANTI_AIR_SPEED = 94;
 const ANTI_AIR_LIFE_SECONDS = 7.2;
 const MODES = {
@@ -155,7 +159,7 @@ export class GameScene {
     this.elements.hud.classList.toggle("hud--split-screen", this.usesSplitScreen());
     this.elements.pause.classList.remove("pause-layer--active");
     this.pushLog(`${this.modeInfo.name} 已启动`);
-    this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 雷管，R 发射滚珠轴承，E 呼叫星链");
+    this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 雷管，R 滚珠轴承，T 切换星链模式");
     if (this.usesSplitScreen()) {
       this.pushLog("双视角已开启：P1 上屏，P2 下屏");
     }
@@ -300,6 +304,7 @@ export class GameScene {
       hits: 0,
       cooldown: 0.8,
       starlinkCooldown: 0,
+      starlinkMode: "auto",
       invincible: 0,
       energyBlockCooldown: 0,
       slipTimer: 0,
@@ -350,7 +355,7 @@ export class GameScene {
     vehicle.slipTimer = Math.max(0, vehicle.slipTimer - dt);
     vehicle.slipPhase += dt * (vehicle.slipTimer > 0 ? 14 : 4);
     this.updateKettleEnergy(vehicle, dt);
-    if (this.controlledAntiAirFor(vehicle)) {
+    if (this.controlledAntiAirFor(vehicle) || this.controlledStarlinkFor(vehicle)) {
       vehicle.velocity.set(0, 0, 0);
       return;
     }
@@ -968,6 +973,10 @@ export class GameScene {
   updateStarlink() {
     for (const vehicle of this.vehicles) {
       if (!vehicle.alive) continue;
+      if (vehicle.controller.startsWith("human") && this.input.consumeStarlinkModeToggleFor(vehicle.id)) {
+        vehicle.starlinkMode = vehicle.starlinkMode === "controlled" ? "auto" : "controlled";
+        this.pushLog(`${vehicle.name} 星链模式：${this.starlinkModeLabel(vehicle)}`);
+      }
       if (vehicle.controller.startsWith("human") && this.input.consumeStarlinkFor(vehicle.id)) {
         this.tryActivateStarlink(vehicle);
       } else if (vehicle.controller === "ai" && this.aiWantsStarlink(vehicle)) {
@@ -1061,9 +1070,13 @@ export class GameScene {
       THREE.MathUtils.clamp(targetBase.z + (owner.id === 1 ? -74 : 74), ARENA.zMin, ARENA.zMax),
     );
     const target = new THREE.Vector3(targetBase.x, 0.8, targetBase.z);
+    const controlled = owner.controller.startsWith("human") && owner.starlinkMode === "controlled";
+    const initialDirection = target.clone().sub(start).normalize();
+    const heading = Math.atan2(-initialDirection.x, -initialDirection.z);
+    const pitch = THREE.MathUtils.clamp(Math.asin(initialDirection.y), -1.22, 0.58);
     const group = makeStarlinkProjectile(owner.accent);
     group.position.copy(start);
-    group.lookAt(target);
+    group.lookAt(start.clone().add(initialDirection));
     this.scene.add(group);
     this.activeStarlinks.push({
       ownerId: owner.id,
@@ -1073,15 +1086,21 @@ export class GameScene {
       start,
       target,
       position: start.clone(),
+      heading,
+      pitch,
+      controlled,
+      maxLife: controlled ? STARLINK_CONTROLLED_LIFE_SECONDS : STARLINK_FLIGHT_SECONDS,
       elapsed: 0,
-      life: STARLINK_FLIGHT_SECONDS,
+      life: controlled ? STARLINK_CONTROLLED_LIFE_SECONDS : STARLINK_FLIGHT_SECONDS,
     });
     this.waveAlertTimer = Math.max(this.waveAlertTimer, 2.4);
-    this.radio = owner.controller.startsWith("human")
-      ? "我方已发射星链计划，等待轨道弹体入场。"
-      : "对方星链计划升空，基地雷达已捕获行动轨迹。";
+    this.radio = controlled
+      ? "星链计划切入操控模式，躲开防空火力后砸中对方基地。"
+      : owner.controller.startsWith("human")
+        ? "我方已发射星链计划，自动弹体按固定弹道入场。"
+        : "对方星链计划升空，基地雷达已捕获行动轨迹。";
     this.radioTimer = 4.6;
-    this.pushLog(`${owner.name} 已发射星链计划`);
+    this.pushLog(`${owner.name} 已发射${this.starlinkModeLabel(owner)}星链计划`);
     this.audio.beep({ frequency: 1320, duration: 0.1, type: "sawtooth", gain: 0.04 });
   }
 
@@ -1235,21 +1254,80 @@ export class GameScene {
     for (const strike of this.activeStarlinks) {
       strike.elapsed += dt;
       strike.life -= dt;
-      const t = THREE.MathUtils.clamp(strike.elapsed / STARLINK_FLIGHT_SECONDS, 0, 1);
-      strike.position.lerpVectors(strike.start, strike.target, t);
-      strike.position.y += Math.sin(t * Math.PI) * 18;
-      strike.group.position.copy(strike.position);
-      strike.group.lookAt(strike.target);
-      strike.group.rotation.z += dt * 5.5;
-      if (t >= 1) {
-        this.resolveStarlinkImpact(strike);
+      if (strike.controlled) {
+        this.updateControlledStarlink(strike, dt);
+      } else {
+        const t = THREE.MathUtils.clamp(strike.elapsed / STARLINK_FLIGHT_SECONDS, 0, 1);
+        strike.position.lerpVectors(strike.start, strike.target, t);
+        strike.position.y += Math.sin(t * Math.PI) * 18;
+        if (t >= 1) {
+          this.resolveStarlinkImpact(strike);
+        }
       }
+      strike.group.position.copy(strike.position);
+      if (strike.controlled) {
+        const direction = directionFromHeadingPitch(strike.heading, strike.pitch);
+        strike.group.lookAt(strike.position.clone().add(direction));
+      } else {
+        strike.group.lookAt(strike.target);
+      }
+      strike.group.rotation.z += dt * 5.5;
     }
     const expired = this.activeStarlinks.filter((strike) => strike.life <= 0);
     for (const strike of expired) {
       this.scene.remove(strike.group);
     }
     this.activeStarlinks = this.activeStarlinks.filter((strike) => strike.life > 0);
+  }
+
+  updateControlledStarlink(strike, dt) {
+    const owner = this.vehicles.find((vehicle) => vehicle.id === strike.ownerId);
+    if (owner?.alive && owner.controller.startsWith("human")) {
+      this.steerStarlinkStrike(strike, owner, dt);
+    }
+
+    const direction = directionFromHeadingPitch(strike.heading, strike.pitch);
+    strike.position.addScaledVector(direction, STARLINK_CONTROLLED_SPEED * dt);
+    if (
+      distanceXZ(strike.position, strike.targetBase) <= STARLINK_CONTROLLED_HIT_RADIUS &&
+      strike.position.y <= STARLINK_CONTROLLED_IMPACT_HEIGHT
+    ) {
+      this.resolveStarlinkImpact(strike);
+      return;
+    }
+
+    if (
+      strike.position.y <= 0.65 ||
+      strike.position.y > 180 ||
+      Math.abs(strike.position.x) > PROJECTILE_BOUNDS.x ||
+      strike.position.z < PROJECTILE_BOUNDS.zMin ||
+      strike.position.z > PROJECTILE_BOUNDS.zMax
+    ) {
+      this.resolveControlledStarlinkMiss(strike);
+    }
+  }
+
+  steerStarlinkStrike(strike, owner, dt) {
+    if (owner.controller === "human1") {
+      const mouse = this.input.consumeMouseDelta();
+      strike.heading = wrapAngle(strike.heading - mouse.x * 0.0022);
+      strike.pitch = THREE.MathUtils.clamp(strike.pitch - mouse.y * 0.0022, -1.22, 0.58);
+    }
+    const axis = this.input.axisFor(owner.id);
+    strike.heading = wrapAngle(strike.heading - axis.x * dt * 1.2);
+    strike.pitch = THREE.MathUtils.clamp(strike.pitch - axis.y * dt * 0.92, -1.22, 0.58);
+  }
+
+  resolveControlledStarlinkMiss(strike) {
+    if (strike.life <= 0) return;
+    const owner = this.vehicles.find((vehicle) => vehicle.id === strike.ownerId);
+    strike.life = 0;
+    this.addExplosion(strike.position.clone(), owner?.accent ?? 0xffd166, 24);
+    this.shake = Math.max(this.shake, 0.9);
+    this.radio = "星链计划砸偏，操控链路断开。";
+    this.radioTimer = 3.8;
+    this.pushLog(`${owner?.name ?? "星链计划"} 操控弹体未命中`);
+    this.audio.beep({ frequency: 180, duration: 0.14, type: "square", gain: 0.036 });
   }
 
   resolveStarlinkInterceptions() {
@@ -1322,6 +1400,10 @@ export class GameScene {
     return this.antiAirMissiles.find((missile) => missile.ownerId === vehicle?.id && missile.controlled && missile.life > 0);
   }
 
+  controlledStarlinkFor(vehicle) {
+    return this.activeStarlinks.find((strike) => strike.ownerId === vehicle?.id && strike.controlled && strike.life > 0);
+  }
+
   detonateDynamite(projectile) {
     if (projectile.userData.detonated) return;
     projectile.userData.detonated = true;
@@ -1379,6 +1461,11 @@ export class GameScene {
   }
 
   updatePrimaryCamera(dt) {
+    const p1Starlink = this.controlledStarlinkFor(this.vehicles[0]);
+    if (p1Starlink) {
+      this.updateStarlinkCamera(this.camera, p1Starlink, dt);
+      return;
+    }
     const p1Missile = this.controlledAntiAirFor(this.vehicles[0]);
     if (p1Missile) {
       this.updateAntiAirCamera(this.camera, p1Missile, dt);
@@ -1409,6 +1496,11 @@ export class GameScene {
     if (!this.usesSplitScreen() || !this.p2Camera) return;
     const p2 = this.vehicles[1];
     if (!p2) return;
+    const p2Starlink = this.controlledStarlinkFor(p2);
+    if (p2Starlink) {
+      this.updateStarlinkCamera(this.p2Camera, p2Starlink, dt);
+      return;
+    }
     const p2Missile = this.controlledAntiAirFor(p2);
     if (p2Missile) {
       this.updateAntiAirCamera(this.p2Camera, p2Missile, dt);
@@ -1427,6 +1519,18 @@ export class GameScene {
       .add(new THREE.Vector3(0, 2.2, 0));
     camera.position.lerp(targetPosition, Math.min(1, dt * 10));
     camera.lookAt(missile.group.position.clone().addScaledVector(direction, 26));
+  }
+
+  updateStarlinkCamera(camera, strike, dt) {
+    const direction = directionFromHeadingPitch(strike.heading, strike.pitch);
+    const right = rightFromHeading(strike.heading);
+    const targetPosition = strike.group.position
+      .clone()
+      .addScaledVector(direction, -12.5)
+      .addScaledVector(right, 1.3)
+      .add(new THREE.Vector3(0, 4.8, 0));
+    camera.position.lerp(targetPosition, Math.min(1, dt * 8.5));
+    camera.lookAt(strike.group.position.clone().addScaledVector(direction, 34));
   }
 
   updateThirdPersonCamera(camera, vehicle, dt) {
@@ -1498,7 +1602,7 @@ export class GameScene {
     const threat = this.incomingStarlinkFor(primaryVehicle);
     this.elements.starlinkBoss?.classList.toggle("boss-bar--active", Boolean(threat));
     if (!threat) return;
-    const progress = THREE.MathUtils.clamp(threat.life / STARLINK_FLIGHT_SECONDS, 0, 1);
+    const progress = THREE.MathUtils.clamp(threat.life / (threat.maxLife ?? STARLINK_FLIGHT_SECONDS), 0, 1);
     const attacker = this.vehicles.find((vehicle) => vehicle.id === threat.ownerId);
     this.elements.starlinkBossLabel.textContent = `${attacker?.name ?? "对方"}已发射星链计划 · F 发射防空`;
     this.elements.starlinkBossFill.style.width = `${progress * 100}%`;
@@ -1516,10 +1620,15 @@ export class GameScene {
 
   starlinkStatusText() {
     if (!this.navigationActive || !this.navigator) return "星链锁止";
+    const mode = this.starlinkModeLabel(this.navigator);
     if (this.navigator.starlinkCooldown > 0) {
-      return `星链 ${Math.ceil(this.navigator.starlinkCooldown)}s`;
+      return `${mode}星链 ${Math.ceil(this.navigator.starlinkCooldown)}s`;
     }
-    return this.starlinkReadyFor(this.navigator) ? "星链待命" : "目标遮挡";
+    return this.starlinkReadyFor(this.navigator) ? `${mode}星链待命` : "目标遮挡";
+  }
+
+  starlinkModeLabel(vehicle) {
+    return vehicle?.starlinkMode === "controlled" ? "操控" : "自动";
   }
 
   updateAimHud(fallbackVehicle) {
