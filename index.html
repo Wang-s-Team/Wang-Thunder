@@ -83,30 +83,35 @@
               <article>
                 <span>01</span>
                 <h3>选择模式</h3>
-                <p>人机适合练习，本地双人适合同屏对战，机机对战用于观战。开局后有 180 秒完成击倒或基地攻陷。</p>
+                <p>人机适合练习，本地双人适合同屏对战，机机对战用于观战。开局前先布置场地，随后在 240 秒内完成击倒或基地攻陷。</p>
               </article>
               <article>
                 <span>02</span>
+                <h3>布置测速器</h3>
+                <p>场地布置阶段双方都能部署超声波测速器。P1 使用左键或 G 部署，P2 使用 L 或 Enter 部署；测速器会持续读取对方速度并显示到屏幕。</p>
+              </article>
+              <article>
+                <span>03</span>
                 <h3>移动和瞄准</h3>
                 <p>点击画布锁定鼠标。玩家一号用 WASD 移动，鼠标转向，Shift 冲刺；玩家二号用方向键移动。</p>
               </article>
               <article>
-                <span>03</span>
+                <span>04</span>
                 <h3>开火和特殊弹</h3>
                 <p>P1 使用左键或空格开火，右键或 Q 发射雷管，R 或鼠标中键发射滚珠轴承。P2 使用 Enter 开火，/ 发射雷管，, 发射滚珠轴承。滚珠轴承命中后会让对方滑倒一会。</p>
               </article>
               <article>
-                <span>04</span>
+                <span>05</span>
                 <h3>回基地补能</h3>
                 <p>移动、冲刺、开火和近防炮都会消耗能量。能量不足时回到己方基地，锅炉会自动烧开水并快速恢复能量。</p>
               </article>
               <article>
-                <span>05</span>
+                <span>06</span>
                 <h3>使用雷达链路</h3>
                 <p>站在己方基地内会接入军用导航。P1 按 T、P2 按 9 切换星链自动/操控，再用 E 或 . 呼叫。自动会沿固定弹道砸向目标；操控会切入弹体视角，可转向躲避防空武器。对方星链来袭时，P1 按 F，P2 按 0 发射防空武器。</p>
               </article>
               <article>
-                <span>06</span>
+                <span>07</span>
                 <h3>赢下对局</h3>
                 <p>击倒对手可直接获胜；冲进敌方基地并持续压制也能攻陷基地。按 P 或 Esc 暂停，再按一次继续。</p>
               </article>
@@ -135,6 +140,21 @@
           <div class="boss-bar" id="starlink-boss" aria-live="polite">
             <div class="boss-bar__label" id="starlink-boss-label">对方已发射星链计划</div>
             <div class="boss-bar__meter"><span id="starlink-boss-fill"></span></div>
+          </div>
+          <div class="setup-panel" id="setup-panel" aria-live="polite">
+            <div class="setup-panel__label">场地布置</div>
+            <div class="setup-panel__time" id="setup-time">00</div>
+            <div class="setup-panel__status" id="setup-status">部署超声波测速器</div>
+          </div>
+          <div class="speed-readout" id="speed-readout" aria-live="polite">
+            <div>
+              <span>蓝方测速</span>
+              <strong id="blue-speed">待部署</strong>
+            </div>
+            <div>
+              <span>红方测速</span>
+              <strong id="red-speed">待部署</strong>
+            </div>
           </div>
           <div class="reticle" id="reticle" aria-hidden="true">
             <span></span>

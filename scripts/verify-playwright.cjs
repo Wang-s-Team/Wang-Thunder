@@ -38,9 +38,23 @@ async function capture(name, viewport, button = "#start-btn", expectedText = "�
 
     await startGame(page, button);
     await page.waitForFunction(
+      () => document.querySelector("#mission-phase")?.textContent?.includes("场地布置"),
+      { timeout: 5000 },
+    );
+    const setup = await page.evaluate(() => ({
+      active: document.querySelector("#setup-panel")?.classList.contains("setup-panel--active"),
+      status: document.querySelector("#setup-status")?.textContent,
+      blueSpeed: document.querySelector("#blue-speed")?.textContent,
+      redSpeed: document.querySelector("#red-speed")?.textContent,
+    }));
+    if (!setup.active || !setup.status?.includes("待部署")) {
+      throw new Error(`${name} should start in setup phase: ${JSON.stringify(setup)}`);
+    }
+    await page.keyboard.press("g");
+    await page.waitForFunction(
       (text) => document.querySelector("#mission-phase")?.textContent?.includes(text),
       expectedText,
-      { timeout: 5000 },
+      { timeout: 26000 },
     );
     await page.waitForTimeout(900);
     const game = await pixelStats(page);
@@ -63,7 +77,7 @@ async function capture(name, viewport, button = "#start-btn", expectedText = "�
       throw new Error(`${name} should use first-person HUD: ${JSON.stringify({ firstPerson, legacyFreecam })}`);
     }
     console.log(`verify: ${name} ok`);
-    return { game, phase, system, firstPerson, legacyFreecam, reticle };
+    return { game, phase, setup, system, firstPerson, legacyFreecam, reticle };
   } finally {
     await browser.close();
   }
