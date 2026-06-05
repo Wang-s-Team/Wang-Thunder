@@ -18,7 +18,7 @@ const ARENA = { x: 120, zMin: -250, zMax: 50 };
 const ARENA_CENTER_Z = (ARENA.zMin + ARENA.zMax) / 2;
 const PROJECTILE_BOUNDS = { x: ARENA.x + 80, zMin: ARENA.zMin - 90, zMax: ARENA.zMax + 90 };
 const BASE_RADIUS = 20;
-const BASE_CAPTURE_SECONDS = 6;
+const BAD_COMPUTER_REPAIR_SECONDS = 6;
 const CIWS_RATE_PER_SECOND = 13000 / 60;
 const ENERGY_MAX = 100;
 const ENERGY_RECHARGE_PER_SECOND = 42;
@@ -359,13 +359,16 @@ export class GameScene {
       x,
       z,
       radius: BASE_RADIUS,
-      capture: 0,
+      computerRepair: 0,
       ciwsAccumulator: 0,
       group,
       turret: group.userData.turret,
       muzzle: group.userData.muzzle,
       captureRing: group.userData.captureRing,
       perimeter: group.userData.perimeter,
+      badComputer: group.userData.badComputer,
+      badComputerScreen: group.userData.badComputerScreen,
+      badComputerSmoke: group.userData.badComputerSmoke,
     };
   }
 
@@ -978,21 +981,32 @@ export class GameScene {
       const enemyInside = enemy.alive && this.isInsideBase(enemy, base);
       if (enemyInside) {
         const pressure = defenderInside ? 0.42 : 1;
-        base.capture = Math.min(1, base.capture + (dt * pressure) / BASE_CAPTURE_SECONDS);
+        base.computerRepair = Math.min(1, base.computerRepair + (dt * pressure) / BAD_COMPUTER_REPAIR_SECONDS);
       } else {
-        base.capture = Math.max(0, base.capture - dt / (BASE_CAPTURE_SECONDS * 1.4));
+        base.computerRepair = Math.max(0, base.computerRepair - dt / (BAD_COMPUTER_REPAIR_SECONDS * 1.4));
       }
 
       if (base.captureRing?.material) {
-        base.captureRing.material.opacity = 0.08 + base.capture * 0.62;
+        base.captureRing.material.opacity = 0.08 + base.computerRepair * 0.62;
       }
       if (base.perimeter?.material) {
         base.perimeter.material.opacity = 0.34 + Math.sin(this.clock * 4 + base.ownerId) * 0.06;
       }
+      if (base.badComputer) {
+        base.badComputer.rotation.y += Math.sin(this.clock * 9 + base.ownerId) * base.computerRepair * dt * 0.04;
+      }
+      if (base.badComputerScreen?.material?.color) {
+        const screenColor = base.computerRepair >= 1 ? 0x4cff82 : base.computerRepair > 0.02 ? 0xffd166 : 0xff3048;
+        base.badComputerScreen.material.color.setHex(screenColor);
+      }
+      if (base.badComputerSmoke?.material) {
+        base.badComputerSmoke.material.opacity = 0.74 * (1 - base.computerRepair);
+        base.badComputerSmoke.rotation.z += dt * (1.8 + base.ownerId * 0.2);
+      }
 
-      if (base.capture >= 1) {
-        this.pushLog(`${base.name} 被攻陷`);
-        this.finishRound(enemy, "BASE_CAPTURE");
+      if (base.computerRepair >= 1) {
+        this.pushLog(`${enemy.name} 修好了 ${base.name} 的坏电脑`);
+        this.finishRound(enemy, "COMPUTER_REPAIRED");
         return;
       }
 
@@ -2020,10 +2034,10 @@ export class GameScene {
 
   energyStatusFor(vehicle) {
     const base = this.baseOf(vehicle);
-    const capture = Math.round((base?.capture ?? 0) * 100);
+    const repair = Math.round((base?.computerRepair ?? 0) * 100);
     const kettle = this.isBoilingKettle(vehicle);
     const slip = vehicle.slipTimer > 0 ? ` · 打滑${Math.ceil(vehicle.slipTimer)}s` : "";
-    return `${Math.round(vehicle.energy)}% 能量 · ${kettle ? "烧开水" : "锅炉离线"} · 基地${capture}%${slip}`;
+    return `${Math.round(vehicle.energy)}% 能量 · ${kettle ? "烧开水" : "锅炉离线"} · 坏电脑${repair}%${slip}`;
   }
 
   isBoilingKettle(vehicle) {
