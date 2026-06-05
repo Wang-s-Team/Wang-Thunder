@@ -824,6 +824,7 @@ export function makeBase(options = {}) {
   const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x101716, roughness: 0.88, metalness: 0.16 });
   const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x424a43, roughness: 0.82, metalness: 0.08 });
   const glowMaterial = new THREE.MeshBasicMaterial({ color: accent });
+  const computerScreenMaterial = new THREE.MeshBasicMaterial({ color: 0xff3048 });
 
   const deck = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 0.22, 72), deckMaterial);
   deck.position.y = 0.12;
@@ -861,6 +862,45 @@ export function makeBase(options = {}) {
   command.castShadow = true;
   command.receiveShadow = true;
   group.add(command);
+
+  const computer = new THREE.Group();
+  computer.position.set(2.4, 0.42, 4.4);
+  computer.rotation.y = -0.72;
+  group.add(computer);
+
+  const computerDesk = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.34, 1.5), wallMaterial);
+  computerDesk.position.y = 0.18;
+  computerDesk.castShadow = true;
+  computerDesk.receiveShadow = true;
+  computer.add(computerDesk);
+
+  const computerTower = new THREE.Mesh(new THREE.BoxGeometry(0.78, 1.3, 0.78), darkMaterial);
+  computerTower.position.set(-1.12, 0.98, 0.16);
+  computerTower.castShadow = true;
+  computer.add(computerTower);
+
+  const monitor = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.92, 0.18), darkMaterial);
+  monitor.position.set(0.36, 1.16, -0.18);
+  monitor.castShadow = true;
+  computer.add(monitor);
+
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.16, 0.62), computerScreenMaterial);
+  screen.position.set(0.36, 1.16, -0.275);
+  screen.rotation.y = Math.PI;
+  computer.add(screen);
+
+  const keyboard = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.08, 0.38), darkMaterial);
+  keyboard.position.set(0.4, 0.42, 0.38);
+  keyboard.castShadow = true;
+  computer.add(keyboard);
+
+  const smoke = new THREE.Mesh(
+    new THREE.TorusGeometry(0.34, 0.035, 6, 18),
+    new THREE.MeshBasicMaterial({ color: 0x48505a, transparent: true, opacity: 0.74 }),
+  );
+  smoke.position.set(-1.12, 1.76, 0.16);
+  smoke.rotation.x = Math.PI / 2;
+  computer.add(smoke);
 
   const navMast = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 8.2, 12), darkMaterial);
   navMast.position.set(-6.4, 4.2, 1.4);
@@ -914,6 +954,9 @@ export function makeBase(options = {}) {
   group.userData.muzzle = muzzle;
   group.userData.captureRing = captureRing;
   group.userData.perimeter = perimeter;
+  group.userData.badComputer = computer;
+  group.userData.badComputerScreen = screen;
+  group.userData.badComputerSmoke = smoke;
   return group;
 }
 
