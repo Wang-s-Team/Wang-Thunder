@@ -15,6 +15,7 @@ export class Input {
     this.starlinkModePulse = { 1: false, 2: false };
     this.antiAirPulse = { 1: false, 2: false };
     this.bearingPulse = { 1: false, 2: false };
+    this.deployPulse = { 1: false, 2: false };
     this.shiftPulse = false;
     this.pausePulse = false;
     this.pointerLocked = false;
@@ -45,6 +46,15 @@ export class Input {
       }
       if (key === ",") {
         this.bearingPulse[2] = true;
+      }
+      if (key === "g") {
+        this.deployPulse[1] = true;
+      }
+      if (key === "l") {
+        this.deployPulse[2] = true;
+      }
+      if (key === "enter") {
+        this.deployPulse[2] = true;
       }
       if (event.key === "Shift") {
         this.shiftPulse = true;
@@ -203,6 +213,15 @@ export class Input {
   consumeBearingFor(player) {
     const value = this.bearingPulse[player];
     this.bearingPulse[player] = false;
+    return value;
+  }
+
+  consumeDeployFor(player) {
+    const value = this.deployPulse[player] || (player === 1 && this.pointer.firePulse);
+    this.deployPulse[player] = false;
+    if (player === 1) {
+      this.pointer.firePulse = false;
+    }
     return value;
   }
 

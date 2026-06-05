@@ -13,6 +13,7 @@ import {
 } from "../core/threeFactories.js";
 
 const ROUND_SECONDS = 240;
+const SETUP_SECONDS = 20;
 const ARENA = { x: 120, zMin: -250, zMax: 50 };
 const ARENA_CENTER_Z = (ARENA.zMin + ARENA.zMax) / 2;
 const PROJECTILE_BOUNDS = { x: ARENA.x + 80, zMin: ARENA.zMin - 90, zMax: ARENA.zMax + 90 };
@@ -44,6 +45,7 @@ const STARLINK_CONTROLLED_HIT_RADIUS = 8.5;
 const STARLINK_CONTROLLED_IMPACT_HEIGHT = 10.5;
 const ANTI_AIR_SPEED = 94;
 const ANTI_AIR_LIFE_SECONDS = 7.2;
+const DEPLOY_CURSOR_SPEED = 72;
 const MODES = {
   pve: { name: "人机对战", controllers: ["human1", "ai"], phase: "玩家一号 VS AI" },
   pvp: { name: "本地双人", controllers: ["human1", "human2"], phase: "本地双人对战" },
@@ -126,12 +128,16 @@ export class GameScene {
     this.sparks = [];
     this.tracers = [];
     this.flashes = [];
+    this.deployables = [];
+    this.placementCursors = this.createPlacementCursors();
     this.starlinkEffects = [];
     this.activeStarlinks = [];
     this.antiAirMissiles = [];
     this.dust = [];
     this.clock = 0;
     this.roundTime = ROUND_SECONDS;
+    this.setupTime = SETUP_SECONDS;
+    this.phase = "setup";
     this.paused = false;
     this.finished = false;
     this.shake = 0;
@@ -156,9 +162,11 @@ export class GameScene {
 
     this.elements.hud.classList.add("hud--active");
     this.elements.hud.classList.add("hud--first-person");
+    this.elements.hud.classList.add("hud--setup");
     this.elements.hud.classList.toggle("hud--split-screen", this.usesSplitScreen());
     this.elements.pause.classList.remove("pause-layer--active");
     this.pushLog(`${this.modeInfo.name} 已启动`);
+    this.pushLog("开局前进入场地布置，双方可部署超声波测速器");
     this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 雷管，R 滚珠轴承，T 切换星链模式");
     if (this.usesSplitScreen()) {
       this.pushLog("双视角已开启：P1 上屏，P2 下屏");
@@ -172,6 +180,7 @@ export class GameScene {
     this.elements.hud.classList.remove("hud--first-person");
     this.elements.hud.classList.remove("hud--split-screen");
     this.elements.hud.classList.remove("hud--radar-link");
+    this.elements.hud.classList.remove("hud--setup");
     this.elements.pause.classList.remove("pause-layer--active");
     this.input.releasePointerLock?.();
     this.disposeScene();
@@ -200,7 +209,9 @@ export class GameScene {
     }
 
     this.clock += dt;
-    this.roundTime = Math.max(0, this.roundTime - dt);
+    if (this.phase === "combat") {
+      this.roundTime = Math.max(0, this.roundTime - dt);
+    }
     this.shake = Math.max(0, this.shake - dt * 8);
     this.firstPerson.recoil = Math.max(0, this.firstPerson.recoil - dt * 5.2);
     this.hitTimer = Math.max(0, this.hitTimer - dt);
@@ -213,6 +224,15 @@ export class GameScene {
     if (this.radioTimer <= 0) {
       this.radio = radioLines[Math.floor(Math.random() * radioLines.length)];
       this.radioTimer = 5 + Math.random() * 4;
+    }
+
+    if (this.phase === "setup") {
+      this.updateSetupPhase(dt);
+      this.updateDeployables(dt);
+      this.updateEffects(dt);
+      this.updateCamera(dt);
+      this.updateHud();
+      return;
     }
 
     for (const vehicle of this.vehicles) {
@@ -233,6 +253,7 @@ export class GameScene {
     this.updateProjectiles(dt);
     this.updateAntiAirMissiles(dt);
     this.updateStarlinkThreats(dt);
+    this.updateDeployables(dt);
     this.updateEffects(dt);
     this.resolveHits();
     this.resolveStarlinkInterceptions();
@@ -346,6 +367,176 @@ export class GameScene {
       captureRing: group.userData.captureRing,
       perimeter: group.userData.perimeter,
     };
+  }
+
+  createPlacementCursors() {
+    return this.vehicles.map((vehicle) => {
+      const base = this.baseOf(vehicle);
+      const cursorGroup = makePlacementCursor(vehicle.accent);
+      const x = THREE.MathUtils.clamp((base?.x ?? vehicle.x) + (vehicle.id === 1 ? 16 : -16), -ARENA.x, ARENA.x);
+      const z = THREE.MathUtils.clamp((base?.z ?? vehicle.z) + (vehicle.id === 1 ? -28 : 28), ARENA.zMin, ARENA.zMax);
+      cursorGroup.position.set(x, 0.08, z);
+      this.scene.add(cursorGroup);
+      return {
+        ownerId: vehicle.id,
+        group: cursorGroup,
+        x,
+        z,
+        placed: false,
+      };
+    });
+  }
+
+  updateSetupPhase(dt) {
+    this.setupTime = Math.max(0, this.setupTime - dt);
+    this.waveAlertTimer = Math.max(this.waveAlertTimer, 0.12);
+    for (const vehicle of this.vehicles) {
+      if (!vehicle.alive) continue;
+      if (vehicle.controller === "ai") {
+        if (!this.speedometerFor(vehicle.id)) {
+          this.deploySpeedometerAt(vehicle, this.autoDeployPointFor(vehicle));
+        }
+        continue;
+      }
+      this.updatePlacementCursor(vehicle, dt);
+      if (this.input.consumeDeployFor(vehicle.id)) {
+        const cursor = this.placementCursorFor(vehicle.id);
+        this.deploySpeedometerAt(vehicle, cursor ?? { x: vehicle.x, z: vehicle.z });
+      }
+    }
+
+    const allDeployed = this.vehicles.every((vehicle) => this.speedometerFor(vehicle.id));
+    if (allDeployed || this.setupTime <= 0) {
+      this.beginCombatPhase();
+    }
+  }
+
+  updatePlacementCursor(vehicle, dt) {
+    const cursor = this.placementCursorFor(vehicle.id);
+    if (!cursor || cursor.placed) return;
+
+    if (vehicle.controller === "human1") {
+      const pointerPoint = this.input.pointerLocked
+        ? this.centerAimPoint(vehicle)
+        : this.pointerWorldPoint();
+      if (pointerPoint && this.input.pointer.moved) {
+        cursor.x = THREE.MathUtils.lerp(cursor.x, pointerPoint.x, Math.min(1, dt * 12));
+        cursor.z = THREE.MathUtils.lerp(cursor.z, pointerPoint.z, Math.min(1, dt * 12));
+      }
+    }
+
+    const axis = this.input.axisFor(vehicle.id);
+    const length = Math.hypot(axis.x, axis.y);
+    if (length > 0.05) {
+      cursor.x = THREE.MathUtils.clamp(cursor.x + (axis.x / length) * DEPLOY_CURSOR_SPEED * dt, -ARENA.x, ARENA.x);
+      cursor.z = THREE.MathUtils.clamp(cursor.z + (axis.y / length) * DEPLOY_CURSOR_SPEED * dt, ARENA.zMin, ARENA.zMax);
+    }
+
+    const enemy = this.enemyOf(vehicle);
+    cursor.group.position.set(cursor.x, 0.08, cursor.z);
+    if (enemy) {
+      cursor.group.rotation.y = angleToTarget(cursor, enemy);
+    }
+    cursor.group.userData.spin += dt * 2.8;
+    cursor.group.userData.ring.rotation.z = cursor.group.userData.spin;
+  }
+
+  beginCombatPhase() {
+    if (this.phase !== "setup") return;
+    for (const vehicle of this.vehicles) {
+      if (!this.speedometerFor(vehicle.id)) {
+        const cursor = this.placementCursorFor(vehicle.id);
+        this.deploySpeedometerAt(vehicle, cursor ?? this.autoDeployPointFor(vehicle));
+      }
+    }
+    for (const cursor of this.placementCursors) {
+      cursor.group.visible = false;
+      cursor.placed = true;
+    }
+    this.phase = "combat";
+    this.clock = 0;
+    this.waveAlertTimer = 2.3;
+    this.radio = "场地布置完成，超声波测速器已接入屏幕。";
+    this.radioTimer = 4.2;
+    this.elements.hud.classList.remove("hud--setup");
+    this.pushLog("双方布置完成，测速器开始读取对方速度");
+  }
+
+  autoDeployPointFor(vehicle) {
+    const base = this.baseOf(vehicle);
+    const enemyBase = this.baseOf(this.enemyOf(vehicle));
+    const side = vehicle.id === 1 ? -1 : 1;
+    const x = THREE.MathUtils.clamp((base?.x ?? vehicle.x) * 0.36 + side * 28, -ARENA.x, ARENA.x);
+    const z = THREE.MathUtils.clamp(((base?.z ?? vehicle.z) + (enemyBase?.z ?? 0)) * 0.48, ARENA.zMin, ARENA.zMax);
+    return { x, z };
+  }
+
+  deploySpeedometerAt(vehicle, point) {
+    if (!vehicle?.alive || !point) return;
+    const existing = this.speedometerFor(vehicle.id);
+    if (existing) {
+      this.scene.remove(existing.group);
+      this.deployables = this.deployables.filter((item) => item !== existing);
+    }
+
+    const enemy = this.enemyOf(vehicle);
+    const x = THREE.MathUtils.clamp(point.x, -ARENA.x, ARENA.x);
+    const z = THREE.MathUtils.clamp(point.z, ARENA.zMin, ARENA.zMax);
+    const group = makeUltrasonicSpeedometer({
+      ownerId: vehicle.id,
+      color: vehicle.color,
+      accent: vehicle.accent,
+    });
+    group.position.set(x, 0, z);
+    if (enemy) group.rotation.y = angleToTarget({ x, z }, enemy);
+    this.scene.add(group);
+
+    this.deployables.push({
+      kind: "speedometer",
+      ownerId: vehicle.id,
+      targetId: enemy?.id,
+      name: `${vehicle.name} 超声波测速器`,
+      group,
+      x,
+      z,
+      speed: 0,
+      displaySpeed: 0,
+    });
+
+    const cursor = this.placementCursorFor(vehicle.id);
+    if (cursor) {
+      cursor.placed = true;
+      cursor.group.visible = false;
+    }
+    this.pushLog(`${vehicle.name} 部署超声波测速器`);
+    this.audio.beep({ frequency: vehicle.id === 1 ? 880 : 820, duration: 0.07, type: "triangle", gain: 0.026 });
+  }
+
+  updateDeployables(dt) {
+    for (const item of this.deployables) {
+      const target = this.vehicles.find((vehicle) => vehicle.id === item.targetId);
+      item.speed = target?.alive ? target.velocity.length() : 0;
+      item.displaySpeed = THREE.MathUtils.lerp(item.displaySpeed, item.speed, Math.min(1, dt * 7));
+      if (target) {
+        item.group.rotation.y = lerpAngle(item.group.rotation.y, angleToTarget(item, target), Math.min(1, dt * 5.2));
+      }
+      const dish = item.group.userData.dish;
+      const wave = item.group.userData.wave;
+      if (dish) dish.rotation.x = -0.28 + Math.sin(this.clock * 5.8 + item.ownerId) * 0.08;
+      if (wave?.material) {
+        const pulse = 0.5 + Math.sin(this.clock * 8 + item.ownerId) * 0.5;
+        wave.scale.setScalar(0.88 + pulse * 0.26);
+        wave.material.opacity = 0.18 + pulse * 0.22;
+      }
+    }
+  }
+
+  speedometerFor(ownerId) {
+    return this.deployables.find((item) => item.kind === "speedometer" && item.ownerId === ownerId);
+  }
+
+  placementCursorFor(ownerId) {
+    return this.placementCursors.find((cursor) => cursor.ownerId === ownerId);
   }
 
   updateVehicle(vehicle, dt) {
@@ -1576,13 +1767,14 @@ export class GameScene {
 
   updateHud() {
     const [p1, p2] = this.vehicles;
-    const seconds = Math.ceil(this.roundTime);
+    const setupActive = this.phase === "setup";
+    const seconds = Math.ceil(setupActive ? this.setupTime : this.roundTime);
     this.elements.score.textContent = `${p1.hits}:${p2.hits}`;
     this.elements.wave.textContent = seconds;
     this.elements.healthBar.style.width = `${p1.health}%`;
     this.elements.chargeBar.style.width = `${p1.energy}%`;
     this.elements.bearing.textContent = `方位 ${Math.round((p1.heading * 180) / Math.PI + 360) % 360}`;
-    this.elements.missionPhase.textContent = this.modeInfo.phase;
+    this.elements.missionPhase.textContent = setupActive ? "场地布置" : this.modeInfo.phase;
     this.elements.altitude.textContent = `距离 ${Math.round(distanceXZ(p1, p2))} m`;
     this.elements.weaponState.textContent = `P1 ${Math.round(p1.health)}% 生命 · ${this.energyStatusFor(p1)}`;
     this.elements.comboState.textContent = `P2 ${Math.round(p2.health)}% 生命 · ${this.energyStatusFor(p2)}`;
@@ -1590,12 +1782,38 @@ export class GameScene {
     this.elements.radioLine.textContent = this.radio;
     this.elements.hitMarker.classList.toggle("hit-marker--active", this.hitTimer > 0);
     this.elements.damageVignette.style.opacity = String(Math.min(0.62, this.damageFlash));
-    this.elements.waveAlert.textContent = `${this.modeInfo.name} · ${formatTime(seconds)}`;
+    this.elements.waveAlert.textContent = setupActive
+      ? `场地布置 · ${seconds}s`
+      : `${this.modeInfo.name} · ${formatTime(seconds)}`;
     this.elements.waveAlert.classList.toggle("wave-alert--active", this.waveAlertTimer > 0);
     this.elements.combatLog.innerHTML = this.logs.map((line) => `<span>${line}</span>`).join("");
+    this.updateSetupHud(setupActive);
+    this.updateSpeedReadout();
     this.updateStarlinkBossBar(p1);
     this.updateAimHud(p1);
     this.updateRadar();
+  }
+
+  updateSetupHud(active) {
+    this.elements.setupPanel?.classList.toggle("setup-panel--active", active);
+    if (!active) return;
+    const statuses = this.vehicles.map((vehicle) => {
+      const deployed = this.speedometerFor(vehicle.id);
+      return `${vehicle.id === 1 ? "蓝方" : "红方"}${deployed ? "已部署" : "待部署"}`;
+    });
+    this.elements.setupTime.textContent = `${Math.ceil(this.setupTime)}s`;
+    this.elements.setupStatus.textContent = statuses.join(" · ");
+  }
+
+  updateSpeedReadout() {
+    const blue = this.speedometerFor(1);
+    const red = this.speedometerFor(2);
+    if (this.elements.blueSpeed) {
+      this.elements.blueSpeed.textContent = blue ? `${blue.displaySpeed.toFixed(1)} m/s` : "待部署";
+    }
+    if (this.elements.redSpeed) {
+      this.elements.redSpeed.textContent = red ? `${red.displaySpeed.toFixed(1)} m/s` : "待部署";
+    }
   }
 
   updateStarlinkBossBar(primaryVehicle) {
@@ -1610,6 +1828,7 @@ export class GameScene {
 
   systemStateText(primaryVehicle) {
     if (this.paused) return "暂停";
+    if (this.phase === "setup") return "场地布置 · 超声波测速器待命";
     const baseState = this.isBoilingKettle(primaryVehicle)
       ? "基地烧开水补能"
       : this.input.pointerLocked
@@ -1632,6 +1851,10 @@ export class GameScene {
   }
 
   updateAimHud(fallbackVehicle) {
+    if (this.phase === "setup") {
+      this.updateSetupAimHud(fallbackVehicle);
+      return;
+    }
     const aimingVehicle = this.vehicles.find((vehicle) => vehicle.controller === "human1") ?? fallbackVehicle;
     const enemy = this.enemyOf(aimingVehicle);
     if (!aimingVehicle || !enemy) return;
@@ -1649,6 +1872,19 @@ export class GameScene {
     this.elements.reticle.classList.toggle("reticle--locked", locked);
     this.elements.targetLock.classList.toggle("target-lock--active", locked);
     this.elements.targetLock.textContent = locked ? `${enemy.name} · 锁定` : `距离 ${Math.round(distanceXZ(aimingVehicle, enemy))} m`;
+  }
+
+  updateSetupAimHud(fallbackVehicle) {
+    const vehicle = this.vehicles.find((item) => item.controller === "human1") ?? fallbackVehicle;
+    const cursor = this.placementCursorFor(vehicle?.id ?? 1) ?? this.placementCursors[0];
+    const screen = cursor ? this.projectToHud(cursor) : { left: 50, top: this.usesSplitScreen() ? 25 : 50 };
+    this.elements.reticle.style.left = `${screen.left}%`;
+    this.elements.reticle.style.top = `${screen.top}%`;
+    this.elements.reticle.classList.remove("reticle--locked");
+    this.elements.targetLock.style.left = `${screen.left}%`;
+    this.elements.targetLock.style.top = `${THREE.MathUtils.clamp(screen.top + 8.5, 8, 92)}%`;
+    this.elements.targetLock.classList.add("target-lock--active");
+    this.elements.targetLock.textContent = cursor?.placed ? "测速器已部署" : "测速器部署点";
   }
 
   projectToHud(point) {
@@ -1681,6 +1917,11 @@ export class GameScene {
       .map((strike) => this.radarTrackFor(strike));
     const dots = [
       ...this.bases.map((base) => ({ x: base.x, z: base.z, kind: base.ownerId === 1 ? "base-blue" : "base-red" })),
+      ...this.deployables.map((item) => ({
+        x: item.x,
+        z: item.z,
+        kind: item.ownerId === 1 ? "speedometer-blue" : "speedometer-red",
+      })),
       ...this.vehicles
         .filter((vehicle) => this.hasLineOfSight(navBase, vehicle))
         .map((vehicle) => ({
@@ -1737,6 +1978,7 @@ export class GameScene {
   }
 
   starlinkReadyFor(vehicle) {
+    if (this.phase === "setup") return false;
     if (!vehicle?.alive || !this.navigationActive || this.navigator !== vehicle) return false;
     return this.canActivateStarlink(vehicle);
   }
@@ -2085,6 +2327,138 @@ export class GameScene {
   usesSplitScreen() {
     return this.mode === "pvp";
   }
+}
+
+function makePlacementCursor(accent) {
+  const group = new THREE.Group();
+  const ringMaterial = new THREE.MeshBasicMaterial({
+    color: accent,
+    transparent: true,
+    opacity: 0.72,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 2.8, 44), ringMaterial);
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+
+  const crossMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.82,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const horizontal = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.05, 0.08), crossMaterial);
+  horizontal.position.y = 0.04;
+  group.add(horizontal);
+  const vertical = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.05, 5.2), crossMaterial);
+  vertical.position.y = 0.04;
+  group.add(vertical);
+
+  const beacon = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.36, 3.2, 16, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: accent,
+      transparent: true,
+      opacity: 0.34,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  beacon.position.y = 1.6;
+  group.add(beacon);
+  group.userData = { ring, spin: 0 };
+  return group;
+}
+
+function makeUltrasonicSpeedometer({ ownerId, color, accent }) {
+  const group = new THREE.Group();
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.5,
+    metalness: 0.42,
+    emissive: new THREE.Color(accent).multiplyScalar(0.08),
+  });
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x11171a, roughness: 0.72, metalness: 0.35 });
+  const metalMaterial = new THREE.MeshStandardMaterial({ color: 0xb8c6cc, roughness: 0.32, metalness: 0.78 });
+  const glowMaterial = new THREE.MeshBasicMaterial({
+    color: accent,
+    transparent: true,
+    opacity: 0.68,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.45, 0.36, 28), darkMaterial);
+  base.position.y = 0.18;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  group.add(base);
+
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 2.15, 16), metalMaterial);
+  mast.position.y = 1.22;
+  mast.castShadow = true;
+  group.add(mast);
+
+  const head = new THREE.Group();
+  head.position.y = 2.45;
+  group.add(head);
+
+  const housing = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.72, 0.88), bodyMaterial);
+  housing.castShadow = true;
+  head.add(housing);
+
+  const dish = new THREE.Mesh(
+    new THREE.SphereGeometry(0.82, 32, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshStandardMaterial({
+      color: 0xd5edf4,
+      roughness: 0.26,
+      metalness: 0.5,
+      emissive: new THREE.Color(accent).multiplyScalar(0.14),
+      side: THREE.DoubleSide,
+    }),
+  );
+  dish.position.z = -0.58;
+  dish.rotation.x = -0.28;
+  head.add(dish);
+
+  const sensor = new THREE.Mesh(new THREE.SphereGeometry(0.18, 14, 10), glowMaterial);
+  sensor.position.z = -1.02;
+  head.add(sensor);
+
+  const wave = new THREE.Mesh(
+    new THREE.TorusGeometry(1.06, 0.025, 8, 48),
+    glowMaterial.clone(),
+  );
+  wave.position.z = -1.08;
+  wave.rotation.x = Math.PI / 2;
+  head.add(wave);
+
+  const screen = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.28, 0.04), glowMaterial);
+  screen.position.set(0, 0.08, 0.47);
+  head.add(screen);
+
+  const tripodMaterial = new THREE.MeshStandardMaterial({ color: 0x2c3336, roughness: 0.62, metalness: 0.46 });
+  for (let i = 0; i < 3; i += 1) {
+    const angle = (i / 3) * Math.PI * 2;
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 1.72), tripodMaterial);
+    leg.position.set(Math.cos(angle) * 0.68, 0.58, Math.sin(angle) * 0.68);
+    leg.rotation.y = -angle;
+    leg.rotation.x = 0.82;
+    leg.castShadow = true;
+    group.add(leg);
+  }
+
+  const label = makeLabelSprite(ownerId === 1 ? "蓝方测速器" : "红方测速器", accent);
+  label.position.y = 3.55;
+  label.scale.set(4.2, 1.15, 1);
+  group.add(label);
+  group.add(new THREE.PointLight(accent, 0.72, 12));
+  group.userData = { dish, wave };
+  return group;
 }
 
 function makeDynamiteProjectile(accent) {

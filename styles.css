@@ -768,6 +768,83 @@ h1 {
   box-shadow: 0 0 16px rgba(255, 79, 100, 0.56);
 }
 
+.setup-panel {
+  position: absolute;
+  left: 50%;
+  top: 142px;
+  display: none;
+  min-width: min(88vw, 360px);
+  transform: translateX(-50%);
+  border: 1px solid rgba(255, 209, 102, 0.5);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(5, 8, 12, 0.76);
+  text-align: center;
+  box-shadow:
+    0 0 24px rgba(255, 209, 102, 0.16),
+    inset 0 0 18px rgba(255, 209, 102, 0.08);
+}
+
+.setup-panel--active {
+  display: grid;
+  gap: 3px;
+}
+
+.setup-panel__label {
+  color: #fff2b8;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.setup-panel__time {
+  color: var(--gold);
+  font-size: 30px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.setup-panel__status {
+  color: #dce8ee;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.speed-readout {
+  position: absolute;
+  right: 18px;
+  top: 218px;
+  display: grid;
+  gap: 8px;
+  width: 170px;
+}
+
+.hud--split-screen .speed-readout {
+  top: calc(50% + 158px);
+}
+
+.speed-readout div {
+  border: 1px solid rgba(67, 224, 255, 0.28);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(5, 8, 12, 0.66);
+}
+
+.speed-readout span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.speed-readout strong {
+  display: block;
+  margin-top: 3px;
+  color: #f6fbff;
+  font-size: 18px;
+  font-weight: 950;
+  line-height: 1;
+}
+
 .hit-marker {
   position: absolute;
   left: 50%;
@@ -969,7 +1046,9 @@ h1 {
 }
 
 .radar__blip--base-blue,
-.radar__blip--base-red {
+.radar__blip--base-red,
+.radar__blip--speedometer-blue,
+.radar__blip--speedometer-red {
   width: 12px;
   height: 12px;
   border: 2px solid currentColor;
@@ -977,6 +1056,18 @@ h1 {
 }
 
 .radar__blip--base-red {
+  color: var(--red);
+}
+
+.radar__blip--speedometer-blue,
+.radar__blip--speedometer-red {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  color: var(--cyan);
+}
+
+.radar__blip--speedometer-red {
   color: var(--red);
 }
 
@@ -1251,6 +1342,29 @@ h1 {
 
   .boss-bar__label {
     font-size: 11px;
+  }
+
+  .setup-panel {
+    top: 192px;
+    width: min(92vw, 300px);
+  }
+
+  .setup-panel__time {
+    font-size: 24px;
+  }
+
+  .speed-readout {
+    top: 208px;
+    right: 10px;
+    width: 116px;
+  }
+
+  .hud--setup .speed-readout {
+    top: 284px;
+  }
+
+  .speed-readout strong {
+    font-size: 14px;
   }
 
   .weapon-strip {
