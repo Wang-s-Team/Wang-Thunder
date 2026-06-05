@@ -41,7 +41,7 @@
               </div>
               <div class="stat">
                 <span>今日状态</span>
-                <strong>情况还不错</strong>
+                <strong id="account-state">游客</strong>
               </div>
             </div>
 
@@ -56,6 +56,10 @@
               <button id="ai-btn" class="ghost-action" type="button" data-mode="aivai">
                 机机对战
               </button>
+              <button id="leaderboard-btn" class="ghost-action" type="button">排行榜</button>
+              <button id="account-btn" class="ghost-action" type="button">用户登录</button>
+              <button id="admin-btn" class="ghost-action" type="button">管理员</button>
+              <button id="logout-btn" class="ghost-action" type="button">退出账号</button>
               <button id="how-btn" class="ghost-action" type="button">游玩教程</button>
             </div>
 
@@ -68,6 +72,67 @@
                 <span>卷面扫描</span>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section id="account-panel" class="screen" aria-labelledby="account-title">
+          <div class="modal modal--system" role="dialog" aria-modal="true">
+            <button id="close-account" class="icon-button" type="button" aria-label="关闭">×</button>
+            <div class="system-heading">
+              <p class="system-heading__kicker">用户系统</p>
+              <h2 id="account-title">登录或注册</h2>
+              <p>登录后，每次对决评分都会记录到账号并参与全站排名。</p>
+            </div>
+            <form id="account-form" class="system-form">
+              <label>
+                <span>用户名</span>
+                <input id="account-username" name="username" autocomplete="username" maxlength="24" required />
+              </label>
+              <label>
+                <span>密码</span>
+                <input id="account-password" name="password" type="password" autocomplete="current-password" minlength="4" required />
+              </label>
+              <div class="system-actions">
+                <button id="login-btn" class="primary-action" type="submit">登录</button>
+                <button id="register-btn" class="ghost-action" type="button">注册</button>
+              </div>
+              <p id="account-message" class="system-message" aria-live="polite"></p>
+            </form>
+          </div>
+        </section>
+
+        <section id="leaderboard-panel" class="screen" aria-labelledby="leaderboard-title">
+          <div class="modal modal--system" role="dialog" aria-modal="true">
+            <button id="close-leaderboard" class="icon-button" type="button" aria-label="关闭">×</button>
+            <div class="system-heading">
+              <p class="system-heading__kicker">全站排名</p>
+              <h2 id="leaderboard-title">评分榜</h2>
+            </div>
+            <div id="leaderboard-list" class="rank-list" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section id="admin-panel" class="screen" aria-labelledby="admin-title">
+          <div class="modal modal--system modal--admin" role="dialog" aria-modal="true">
+            <button id="close-admin" class="icon-button" type="button" aria-label="关闭">×</button>
+            <div class="system-heading">
+              <p class="system-heading__kicker">管理员系统</p>
+              <h2 id="admin-title">用户管理</h2>
+              <p>默认管理员账号：admin，密码：admin123。</p>
+            </div>
+            <form id="admin-create-form" class="system-form system-form--inline">
+              <label>
+                <span>新用户名</span>
+                <input id="admin-username" name="username" maxlength="24" />
+              </label>
+              <label>
+                <span>新密码</span>
+                <input id="admin-password" name="password" type="password" minlength="4" />
+              </label>
+              <button id="admin-create-btn" class="primary-action" type="submit">创建用户</button>
+            </form>
+            <p id="admin-message" class="system-message" aria-live="polite"></p>
+            <div id="admin-user-list" class="admin-list" aria-live="polite"></div>
           </div>
         </section>
 
@@ -203,7 +268,9 @@
               <div><span id="final-score">0</span><small>分数</small></div>
               <div><span id="final-wave">1</span><small>波次</small></div>
               <div><span id="final-rank">B</span><small>评级</small></div>
+              <div><span id="final-standing">-</span><small>全站排名</small></div>
             </div>
+            <div id="result-leaderboard" class="rank-list rank-list--compact"></div>
             <button id="restart-btn" class="primary-action" type="button">
               <span class="primary-action__icon">↻</span>
               <span>再来一局</span>
