@@ -31,6 +31,7 @@ const ENERGY_DYNAMITE_COST = 28;
 const ENERGY_BEARING_COST = 17;
 const ENERGY_CIWS_ROUND_COST = 0.04;
 const ENERGY_ANTI_AIR_COST = 24;
+const ENERGY_NUCLEAR_COST = 46;
 const DYNAMITE_RADIUS = 10.5;
 const DYNAMITE_DAMAGE = 18;
 const DYNAMITE_KNOCKBACK = 50;
@@ -39,6 +40,10 @@ const BEARING_DAMAGE = 7;
 const BEARING_SLIP_SECONDS = 2.6;
 const BEARING_SLIP_IMPULSE = 30;
 const BLAST_GRAVITY = 34;
+const LEAD_SUIT_DURATION_SECONDS = 30;
+const LEAD_SUIT_SPEED_MULTIPLIER = 0.1;
+const NUCLEAR_DURATION_SECONDS = 30;
+const NUCLEAR_DAMAGE_PER_SECOND = 7.5;
 const STARLINK_COOLDOWN_SECONDS = 18;
 const STARLINK_FLIGHT_SECONDS = 9.2;
 const STARLINK_CONTROLLED_LIFE_SECONDS = 12.5;
@@ -169,6 +174,7 @@ export class GameScene {
     this.activeStarlinks = [];
     this.antiAirMissiles = [];
     this.dust = [];
+    this.nuclearEvent = null;
     this.clock = 0;
     this.roundTime = ROUND_SECONDS;
     this.setupTime = SETUP_SECONDS;
@@ -198,6 +204,7 @@ export class GameScene {
     this.pushLog("开局前进入场地布置，双方可部署超声波测速器");
     this.pushLog("点击画面锁定鼠标，WASD 移动，1-5 切换武器，左键/空格执行当前武器");
     this.pushLog("武器槽：1 主武器 · 2 雷管 · 3 滚珠轴承 · 4 远程星链 · 5 远程防空");
+    this.pushLog("X 触发核能，C 穿铅服 30s；未穿铅服会被核污染持续掉血");
     this.pushLog("本地双人 P2 使用 6-0 切换同款武器槽，Enter 执行当前武器");
     if (this.mode === "online") {
       this.pushLog("在线 PK 使用人机对战同款本机快捷键，远端玩家不占用本地 P2 键位");
@@ -274,9 +281,11 @@ export class GameScene {
       vehicle.cooldown = Math.max(0, vehicle.cooldown - dt);
       vehicle.starlinkCooldown = Math.max(0, vehicle.starlinkCooldown - dt);
       vehicle.invincible = Math.max(0, vehicle.invincible - dt);
+      vehicle.leadSuitTimer = Math.max(0, vehicle.leadSuitTimer - dt);
       this.updateVehicle(vehicle, dt);
     }
 
+    this.updateNuclearEvent(dt);
     this.updateBases(dt);
 
     if (this.dustTimer <= 0) {
@@ -366,6 +375,7 @@ export class GameScene {
       slipTimer: 0,
       slipPhase: 0,
       slipSpin: 0,
+      leadSuitTimer: 0,
       alive: true,
       modelType: isPlayerSide ? "human" : "tank",
       group,
@@ -592,6 +602,9 @@ export class GameScene {
     vehicle.slipPhase += dt * (vehicle.slipTimer > 0 ? 14 : 4);
     if (vehicle.controller.startsWith("human")) {
       this.updateWeaponSelection(vehicle);
+      if (this.input.consumeLeadSuitFor(vehicle.id)) {
+        this.tryEquipLeadSuit(vehicle);
+      }
     } else if (vehicle.controller === "ai") {
       this.updateAiTactics(vehicle, enemy, dt);
     }
@@ -611,11 +624,12 @@ export class GameScene {
     const speed = vehicle.controller === "ai" ? 16.4 : 18.2;
     const wantsMove = Math.hypot(axis.x, axis.y) > 0.05;
     const slipControl = this.slipControlFor(vehicle);
+    const leadSuitSpeed = this.leadSuitSpeedMultiplier(vehicle);
     if (wantsMove && !this.trySpendMoveEnergy(vehicle, dt, false)) {
       axis = { x: 0, y: 0 };
     }
-    const dx = (axis.x / length) * speed * slipControl * dt;
-    const dz = (axis.y / length) * speed * slipControl * dt;
+    const dx = (axis.x / length) * speed * slipControl * leadSuitSpeed * dt;
+    const dz = (axis.y / length) * speed * slipControl * leadSuitSpeed * dt;
     vehicle.x = THREE.MathUtils.clamp(vehicle.x + dx, -ARENA.x, ARENA.x);
     vehicle.z = THREE.MathUtils.clamp(vehicle.z + dz, ARENA.zMin, ARENA.zMax);
     vehicle.velocity.set(dx / Math.max(dt, 0.001), 0, dz / Math.max(dt, 0.001));
@@ -676,8 +690,9 @@ export class GameScene {
     const speed = sprinting ? 25.5 : 18.8;
     const canMove = moveLength <= 0 || this.trySpendMoveEnergy(vehicle, dt, sprinting);
     const slipControl = this.slipControlFor(vehicle);
-    const dx = canMove ? move.x * speed * slipControl * dt : 0;
-    const dz = canMove ? move.z * speed * slipControl * dt : 0;
+    const leadSuitSpeed = this.leadSuitSpeedMultiplier(vehicle);
+    const dx = canMove ? move.x * speed * slipControl * leadSuitSpeed * dt : 0;
+    const dz = canMove ? move.z * speed * slipControl * leadSuitSpeed * dt : 0;
     vehicle.x = THREE.MathUtils.clamp(vehicle.x + dx, -ARENA.x, ARENA.x);
     vehicle.z = THREE.MathUtils.clamp(vehicle.z + dz, ARENA.zMin, ARENA.zMax);
     vehicle.velocity.set(dx / Math.max(dt, 0.001), 0, dz / Math.max(dt, 0.001));
@@ -1436,6 +1451,74 @@ export class GameScene {
       if (vehicle.controller.startsWith("human") && this.input.consumeAntiAirFor(vehicle.id)) {
         this.tryLaunchAntiAir(vehicle);
       }
+      if (vehicle.controller.startsWith("human") && this.input.consumeNuclearFor(vehicle.id)) {
+        this.tryActivateNuclear(vehicle);
+      }
+    }
+  }
+
+  tryActivateNuclear(vehicle) {
+    if (!vehicle?.alive) return;
+    if (this.nuclearEvent?.active) {
+      this.pushLog(`${vehicle.name} 核能仍在污染中`);
+      return;
+    }
+    if (!this.spendEnergy(vehicle, ENERGY_NUCLEAR_COST, `${vehicle.name} 核能不足，回基地烧开水后再触发核能`)) {
+      return;
+    }
+    this.nuclearEvent = {
+      active: true,
+      ownerId: vehicle.id,
+      timer: NUCLEAR_DURATION_SECONDS,
+      duration: NUCLEAR_DURATION_SECONDS,
+    };
+    this.waveAlertTimer = Math.max(this.waveAlertTimer, 2.8);
+    this.radio = "核能覆盖全图，未穿铅服目标将持续遭受辐射。";
+    this.radioTimer = 4.8;
+    this.damageFlash = Math.max(this.damageFlash, 0.25);
+    this.shake = Math.max(this.shake, 0.9);
+    this.pushLog(`${vehicle.name} 触发核能，全图进入辐射区`);
+    this.audio.beep({ frequency: 150, duration: 0.18, type: "square", gain: 0.06 });
+    this.audio.beep({ frequency: 1120, duration: 0.1, type: "triangle", gain: 0.04 });
+  }
+
+  tryEquipLeadSuit(vehicle) {
+    if (!vehicle?.alive) return;
+    vehicle.leadSuitTimer = LEAD_SUIT_DURATION_SECONDS;
+    this.pushLog(`${vehicle.name} 穿上铅服，机动性降低 90%`);
+    this.audio.beep({ frequency: 360, duration: 0.06, type: "square", gain: 0.03 });
+  }
+
+  updateNuclearEvent(dt) {
+    if (!this.nuclearEvent?.active) return;
+    this.nuclearEvent.timer = Math.max(0, this.nuclearEvent.timer - dt);
+
+    for (const vehicle of this.vehicles) {
+      if (!vehicle.alive || vehicle.leadSuitTimer > 0) continue;
+      vehicle.health = Math.max(0, vehicle.health - NUCLEAR_DAMAGE_PER_SECOND * dt);
+      if (vehicle.controller.startsWith("human")) {
+        this.damageFlash = Math.max(this.damageFlash, 0.2);
+      }
+      if (vehicle.health > 0) continue;
+
+      vehicle.alive = false;
+      this.pushLog(`${vehicle.name} 未穿铅服，被核污染拖垮`);
+      const owner = this.vehicles.find((item) => item.id === this.nuclearEvent.ownerId);
+      if (owner && owner.id !== vehicle.id) {
+        owner.score += 2600;
+        owner.hits += 1;
+        this.finishRound(owner, "NUCLEAR_EXPOSURE");
+      } else {
+        this.finishRound(this.pickWinnerByScore(), "NUCLEAR_EXPOSURE");
+      }
+      return;
+    }
+
+    if (this.nuclearEvent.timer <= 0) {
+      this.nuclearEvent.active = false;
+      this.radio = "核污染衰减完成，区域读数恢复。";
+      this.radioTimer = 3.8;
+      this.pushLog("核能污染结束");
     }
   }
 
@@ -2089,6 +2172,9 @@ export class GameScene {
   systemStateText(primaryVehicle) {
     if (this.paused) return "暂停";
     if (this.phase === "setup") return "场地布置 · 超声波测速器待命";
+    if (this.nuclearEvent?.active) {
+      return `核污染 ${Math.ceil(this.nuclearEvent.timer)}s · ${primaryVehicle.leadSuitTimer > 0 ? `铅服${Math.ceil(primaryVehicle.leadSuitTimer)}s` : "未穿铅服"}`;
+    }
     const baseState = this.isBoilingKettle(primaryVehicle)
       ? "基地烧开水补能"
       : this.input.pointerLocked
@@ -2284,7 +2370,13 @@ export class GameScene {
     const repair = Math.round((base?.computerRepair ?? 0) * 100);
     const kettle = this.isBoilingKettle(vehicle);
     const slip = vehicle.slipTimer > 0 ? ` · 打滑${Math.ceil(vehicle.slipTimer)}s` : "";
-    return `${Math.round(vehicle.energy)}% 能量 · ${kettle ? "烧开水" : "锅炉离线"} · 坏电脑${repair}%${slip}`;
+    const leadSuit = vehicle.leadSuitTimer > 0 ? ` · 铅服${Math.ceil(vehicle.leadSuitTimer)}s` : "";
+    const nuclear = this.nuclearEvent?.active ? ` · ${vehicle.leadSuitTimer > 0 ? "防辐射中" : "辐射掉血"}` : "";
+    return `${Math.round(vehicle.energy)}% 能量 · ${kettle ? "烧开水" : "锅炉离线"} · 坏电脑${repair}%${slip}${leadSuit}${nuclear}`;
+  }
+
+  leadSuitSpeedMultiplier(vehicle) {
+    return vehicle?.leadSuitTimer > 0 ? LEAD_SUIT_SPEED_MULTIPLIER : 1;
   }
 
   isBoilingKettle(vehicle) {

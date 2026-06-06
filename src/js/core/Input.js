@@ -14,6 +14,8 @@ export class Input {
     this.starlinkPulse = { 1: false, 2: false };
     this.starlinkModePulse = { 1: false, 2: false };
     this.antiAirPulse = { 1: false, 2: false };
+    this.nuclearPulse = { 1: false, 2: false };
+    this.leadSuitPulse = { 1: false, 2: false };
     this.bearingPulse = { 1: false, 2: false };
     this.deployPulse = { 1: false, 2: false };
     this.fireKeyPulse = { 1: false, 2: false };
@@ -49,6 +51,18 @@ export class Input {
       }
       if (key === "0" && code !== "Digit0") {
         this.antiAirPulse[2] = true;
+      }
+      if (key === "x") {
+        this.nuclearPulse[1] = true;
+      }
+      if (key === "]") {
+        this.nuclearPulse[2] = true;
+      }
+      if (key === "c") {
+        this.leadSuitPulse[1] = true;
+      }
+      if (key === "[") {
+        this.leadSuitPulse[2] = true;
       }
       if (key === "r") {
         this.bearingPulse[1] = true;
@@ -223,6 +237,18 @@ export class Input {
   consumeAntiAirFor(player) {
     const value = this.antiAirPulse[player];
     this.antiAirPulse[player] = false;
+    return value;
+  }
+
+  consumeNuclearFor(player) {
+    const value = this.nuclearPulse[player];
+    this.nuclearPulse[player] = false;
+    return value;
+  }
+
+  consumeLeadSuitFor(player) {
+    const value = this.leadSuitPulse[player];
+    this.leadSuitPulse[player] = false;
     return value;
   }
 
