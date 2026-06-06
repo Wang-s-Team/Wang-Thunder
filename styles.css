@@ -1355,6 +1355,180 @@ h1 {
   top: calc(50% + 18px);
 }
 
+.strategic-map {
+  position: absolute;
+  right: 18px;
+  top: 222px;
+  width: 244px;
+  height: 244px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 209, 102, 0.34);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(5, 8, 12, 0.9), rgba(7, 10, 14, 0.8)),
+    radial-gradient(circle at 25% 22%, rgba(67, 224, 255, 0.08), transparent 34%);
+  box-shadow:
+    inset 0 0 42px rgba(255, 209, 102, 0.08),
+    0 18px 42px rgba(0, 0, 0, 0.28);
+}
+
+.hud--split-screen .strategic-map {
+  top: calc(50% + 136px);
+}
+
+.strategic-map::before {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  z-index: 3;
+  content: "大地图";
+  color: rgba(255, 242, 184, 0.94);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+}
+
+.strategic-map__grid,
+.strategic-map__blips {
+  position: absolute;
+  inset: 0;
+}
+
+.strategic-map__grid {
+  background:
+    linear-gradient(90deg, transparent 49.5%, rgba(255, 209, 102, 0.16) 50%, transparent 50.5%),
+    linear-gradient(0deg, transparent 49.5%, rgba(255, 209, 102, 0.16) 50%, transparent 50.5%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 48px),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 48px);
+}
+
+.strategic-map__item {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+
+.strategic-map__shadow {
+  z-index: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 209, 102, 0.18);
+  background: rgba(255, 209, 102, 0.08);
+}
+
+.strategic-map__building {
+  z-index: 1;
+  border: 1px solid rgba(255, 209, 102, 0.22);
+  border-radius: 2px;
+  background: rgba(255, 209, 102, 0.12);
+}
+
+.strategic-map__track {
+  z-index: 1;
+  height: 2px;
+  transform-origin: left center;
+  background: linear-gradient(90deg, currentColor, transparent);
+  opacity: 0.9;
+}
+
+.strategic-map__track--blue {
+  color: var(--cyan);
+}
+
+.strategic-map__track--red {
+  color: var(--red);
+}
+
+.strategic-map__track--gold {
+  color: var(--gold);
+}
+
+.strategic-map__track--blocked {
+  background: repeating-linear-gradient(90deg, currentColor 0 8px, transparent 8px 14px);
+}
+
+.strategic-map__blip {
+  z-index: 2;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 10px currentColor;
+}
+
+.strategic-map__blip--red,
+.strategic-map__blip--shot-red {
+  background: var(--red);
+}
+
+.strategic-map__blip--base-blue,
+.strategic-map__blip--base-red {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  background: transparent;
+}
+
+.strategic-map__blip--base-blue {
+  color: var(--cyan);
+}
+
+.strategic-map__blip--base-red {
+  color: var(--red);
+}
+
+.strategic-map__blip--speedometer-blue,
+.strategic-map__blip--speedometer-red {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 2px solid currentColor;
+  background: transparent;
+}
+
+.strategic-map__blip--speedometer-blue {
+  color: var(--cyan);
+}
+
+.strategic-map__blip--speedometer-red {
+  color: var(--red);
+}
+
+.strategic-map__blip--starlink-target,
+.strategic-map__blip--starlink-incoming {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--gold);
+  background: rgba(255, 79, 100, 0.82);
+}
+
+.strategic-map__blip--starlink-outgoing,
+.strategic-map__blip--interceptor {
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  background: transparent;
+}
+
+.strategic-map__blip--starlink-outgoing {
+  color: var(--gold);
+}
+
+.strategic-map__blip--interceptor {
+  color: var(--cyan);
+}
+
+.strategic-map__blip--shot-blue,
+.strategic-map__blip--shot-red {
+  width: 4px;
+  height: 4px;
+}
+
+.strategic-map__blip--occluded {
+  box-shadow:
+    0 0 8px rgba(255, 79, 100, 0.5),
+    inset 0 0 0 1px rgba(255, 209, 102, 0.28);
+  filter: saturate(0.2);
+}
+
 .radar::after {
   position: absolute;
   left: 50%;
@@ -1874,6 +2048,13 @@ h1 {
     right: 10px;
     width: 92px;
     height: 92px;
+  }
+
+  .strategic-map {
+    top: 206px;
+    right: 10px;
+    width: 132px;
+    height: 132px;
   }
 
   .combat-log {

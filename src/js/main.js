@@ -88,6 +88,8 @@ const elements = {
   targetLock: document.querySelector("#target-lock"),
   radar: document.querySelector("#radar"),
   radarBlips: document.querySelector("#radar-blips"),
+  strategicMap: document.querySelector("#strategic-map"),
+  strategicMapBlips: document.querySelector("#strategic-map-blips"),
   hitMarker: document.querySelector("#hit-marker"),
   starlinkBoss: document.querySelector("#starlink-boss"),
   starlinkBossLabel: document.querySelector("#starlink-boss-label"),
