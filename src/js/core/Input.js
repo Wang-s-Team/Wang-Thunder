@@ -16,13 +16,22 @@ export class Input {
     this.antiAirPulse = { 1: false, 2: false };
     this.bearingPulse = { 1: false, 2: false };
     this.deployPulse = { 1: false, 2: false };
+    this.fireKeyPulse = { 1: false, 2: false };
+    this.weaponSelectPulse = { 1: null, 2: null };
     this.shiftPulse = false;
     this.pausePulse = false;
     this.pointerLocked = false;
 
     window.addEventListener("keydown", (event) => {
       const key = event.key.toLowerCase();
+      const code = event.code;
       this.keys.add(key);
+      if (["Digit1", "Digit2", "Digit3", "Digit4", "Digit5"].includes(code)) {
+        this.weaponSelectPulse[1] = Number(code.at(-1));
+      }
+      if (["Digit6", "Digit7", "Digit8", "Digit9", "Digit0"].includes(code)) {
+        this.weaponSelectPulse[2] = code === "Digit0" ? 5 : Number(code.at(-1)) - 5;
+      }
       if (key === "e") {
         this.starlinkPulse[1] = true;
       }
@@ -32,13 +41,13 @@ export class Input {
       if (key === "t") {
         this.starlinkModePulse[1] = true;
       }
-      if (key === "9") {
+      if (key === "9" && code !== "Digit9") {
         this.starlinkModePulse[2] = true;
       }
       if (key === "f") {
         this.antiAirPulse[1] = true;
       }
-      if (key === "0") {
+      if (key === "0" && code !== "Digit0") {
         this.antiAirPulse[2] = true;
       }
       if (key === "r") {
@@ -53,7 +62,13 @@ export class Input {
       if (key === "l") {
         this.deployPulse[2] = true;
       }
-      if (key === "enter") {
+      if (key === " " && !event.repeat) {
+        this.fireKeyPulse[1] = true;
+      }
+      if ((key === "enter" || key === "numpadenter") && !event.repeat) {
+        this.fireKeyPulse[2] = true;
+      }
+      if (key === "enter" || key === "numpadenter") {
         this.deployPulse[2] = true;
       }
       if (event.key === "Shift") {
@@ -93,6 +108,7 @@ export class Input {
       }
       this.pointer.down = true;
       this.pointer.firePulse = true;
+      this.fireKeyPulse[1] = true;
     });
     canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     window.addEventListener("pointerup", (event) => {
@@ -221,7 +237,25 @@ export class Input {
     this.deployPulse[player] = false;
     if (player === 1) {
       this.pointer.firePulse = false;
+      this.fireKeyPulse[1] = false;
+    } else {
+      this.fireKeyPulse[player] = false;
     }
+    return value;
+  }
+
+  consumeFirePulseFor(player) {
+    const value = this.fireKeyPulse[player] || (player === 1 && this.pointer.firePulse);
+    this.fireKeyPulse[player] = false;
+    if (player === 1) {
+      this.pointer.firePulse = false;
+    }
+    return value;
+  }
+
+  consumeWeaponSelectFor(player) {
+    const value = this.weaponSelectPulse[player];
+    this.weaponSelectPulse[player] = null;
     return value;
   }
 

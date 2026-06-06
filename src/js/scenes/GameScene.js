@@ -54,6 +54,14 @@ const MODES = {
   online: { name: "在线联机 / PK", controllers: ["human1", "ai"], phase: "在线 PK" },
   aivai: { name: "机机对战", controllers: ["ai", "ai"], phase: "AI 裁判观战" },
 };
+const WEAPON_SLOTS = {
+  cannon: { slot: 1, name: "主武器", hint: "开火" },
+  dynamite: { slot: 2, name: "雷管", hint: "抛射" },
+  bearing: { slot: 3, name: "滚珠轴承", hint: "打滑" },
+  starlink: { slot: 4, name: "星链", hint: "远程呼叫" },
+  antiAir: { slot: 5, name: "防空", hint: "远程拦截" },
+};
+const WEAPON_BY_SLOT = Object.fromEntries(Object.entries(WEAPON_SLOTS).map(([id, weapon]) => [weapon.slot, id]));
 
 export class GameScene {
   constructor({ canvas, input, elements, audio }) {
@@ -179,7 +187,9 @@ export class GameScene {
     this.pushLog(`${this.modeInfo.name} 已启动`);
     this.pushLog(`地图：${this.mapConfig.name} - ${this.mapConfig.briefing}`);
     this.pushLog("开局前进入场地布置，双方可部署超声波测速器");
-    this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 雷管，R 滚珠轴承，T 切换星链模式");
+    this.pushLog("点击画面锁定鼠标，WASD 移动，1-5 切换武器，左键/空格执行当前武器");
+    this.pushLog("武器槽：1 主武器 · 2 雷管 · 3 滚珠轴承 · 4 远程星链 · 5 远程防空");
+    this.pushLog("本地双人 P2 使用 6-0 切换同款武器槽，Enter 执行当前武器");
     if (this.mode === "online") {
       this.pushLog("在线 PK 使用人机对战同款本机快捷键，远端玩家不占用本地 P2 键位");
     }
@@ -341,6 +351,7 @@ export class GameScene {
       cooldown: 0.8,
       starlinkCooldown: 0,
       starlinkMode: "auto",
+      selectedWeapon: "cannon",
       invincible: 0,
       energyBlockCooldown: 0,
       slipTimer: 0,
@@ -563,6 +574,9 @@ export class GameScene {
     vehicle.energyBlockCooldown = Math.max(0, vehicle.energyBlockCooldown - dt);
     vehicle.slipTimer = Math.max(0, vehicle.slipTimer - dt);
     vehicle.slipPhase += dt * (vehicle.slipTimer > 0 ? 14 : 4);
+    if (vehicle.controller.startsWith("human")) {
+      this.updateWeaponSelection(vehicle);
+    }
     this.updateKettleEnergy(vehicle, dt);
     if (this.controlledAntiAirFor(vehicle) || this.controlledStarlinkFor(vehicle)) {
       vehicle.velocity.set(0, 0, 0);
@@ -610,14 +624,14 @@ export class GameScene {
       0.28,
     );
 
-    const wantsDynamite =
-      vehicle.controller === "ai" ? this.aiWantsDynamite(vehicle, enemy) : this.input.wantsDynamiteFor(vehicle.id);
-    if (wantsDynamite) {
+    if (vehicle.controller === "ai" && this.aiWantsDynamite(vehicle, enemy)) {
       this.fireDynamite(vehicle, predictedAimPoint(enemy, 0.42));
-    } else if (vehicle.controller === "ai" ? this.aiWantsBearing(vehicle, enemy) : this.input.consumeBearingFor(vehicle.id)) {
+    } else if (vehicle.controller === "ai" && this.aiWantsBearing(vehicle, enemy)) {
       this.fireBearing(vehicle, predictedAimPoint(enemy, 0.2));
-    } else if (vehicle.controller === "ai" ? this.aiWantsFire(vehicle, enemy) : this.input.wantsFireFor(vehicle.id)) {
+    } else if (vehicle.controller === "ai" && this.aiWantsFire(vehicle, enemy)) {
       this.fire(vehicle, enemy, aimPoint);
+    } else if (vehicle.controller.startsWith("human")) {
+      this.handleSelectedWeaponFire(vehicle, enemy, aimPoint, false);
     }
   }
 
@@ -677,12 +691,72 @@ export class GameScene {
       this.firstPerson.bob = THREE.MathUtils.lerp(this.firstPerson.bob, 0, Math.min(1, dt * 4));
     }
 
-    if (this.input.wantsDynamiteFor(vehicle.id)) {
-      this.fireDynamiteFirstPerson(vehicle);
-    } else if (this.input.consumeBearingFor(vehicle.id)) {
-      this.fireBearingFirstPerson(vehicle);
-    } else if (this.input.wantsFireFor(vehicle.id)) {
-      this.fireFirstPerson(vehicle, enemy);
+    this.handleSelectedWeaponFire(vehicle, enemy, vehicle.aimPoint, true);
+  }
+
+  updateWeaponSelection(vehicle) {
+    const slot = this.input.consumeWeaponSelectFor(vehicle.id);
+    if (!slot) return;
+    const weapon = WEAPON_BY_SLOT[slot];
+    if (!weapon) return;
+    vehicle.selectedWeapon = weapon;
+    this.pushLog(`${vehicle.name} 切换武器：${this.weaponLabel(vehicle)}`);
+    this.audio.beep({ frequency: 420 + slot * 70, duration: 0.055, type: "triangle", gain: 0.026 });
+  }
+
+  weaponLabel(vehicle) {
+    const weapon = WEAPON_SLOTS[vehicle?.selectedWeapon ?? "cannon"] ?? WEAPON_SLOTS.cannon;
+    return `${this.weaponSlotKey(vehicle, weapon)} ${weapon.name} · ${weapon.hint}`;
+  }
+
+  weaponSlotKey(vehicle, weapon) {
+    if (vehicle?.id === 2) {
+      const p2Slots = { 1: "6", 2: "7", 3: "8", 4: "9", 5: "0" };
+      return p2Slots[weapon.slot] ?? String(weapon.slot);
+    }
+    return String(weapon.slot);
+  }
+
+  handleSelectedWeaponFire(vehicle, enemy, aimPoint, firstPerson) {
+    const legacyDynamite = this.input.wantsDynamiteFor(vehicle.id);
+    const legacyBearing = this.input.consumeBearingFor(vehicle.id);
+    if (legacyDynamite) {
+      if (firstPerson) this.fireDynamiteFirstPerson(vehicle);
+      else this.fireDynamite(vehicle, predictedAimPoint(enemy, 0.42));
+      return;
+    }
+    if (legacyBearing) {
+      if (firstPerson) this.fireBearingFirstPerson(vehicle);
+      else this.fireBearing(vehicle, predictedAimPoint(enemy, 0.2));
+      return;
+    }
+
+    const weapon = vehicle.selectedWeapon ?? "cannon";
+    if (weapon === "cannon") {
+      if (this.input.wantsFireFor(vehicle.id)) {
+        if (firstPerson) this.fireFirstPerson(vehicle, enemy);
+        else this.fire(vehicle, enemy, aimPoint);
+      }
+      return;
+    }
+
+    if (!this.input.consumeFirePulseFor(vehicle.id)) return;
+    if (weapon === "dynamite") {
+      if (firstPerson) this.fireDynamiteFirstPerson(vehicle);
+      else this.fireDynamite(vehicle, predictedAimPoint(enemy, 0.42));
+      return;
+    }
+    if (weapon === "bearing") {
+      if (firstPerson) this.fireBearingFirstPerson(vehicle);
+      else this.fireBearing(vehicle, predictedAimPoint(enemy, 0.2));
+      return;
+    }
+    if (weapon === "starlink") {
+      this.tryActivateStarlink(vehicle);
+      return;
+    }
+    if (weapon === "antiAir") {
+      this.tryLaunchAntiAir(vehicle);
     }
   }
 
@@ -1253,7 +1327,7 @@ export class GameScene {
     const base = this.baseOf(vehicle);
     if (!enemy?.alive || !base) return;
     if (!this.hasBaseRadarLink(vehicle)) {
-      this.pushLog(`${vehicle.name} 星链计划锁止：需要基地雷达`);
+      this.pushLog(`${vehicle.name} 星链计划锁止：基地雷达离线`);
       return;
     }
     if (vehicle.starlinkCooldown > 0) {
@@ -1278,7 +1352,7 @@ export class GameScene {
 
   hasBaseRadarLink(vehicle) {
     const base = this.baseOf(vehicle);
-    return Boolean(vehicle?.alive && base && this.isInsideBase(vehicle, base));
+    return Boolean(vehicle?.alive && base);
   }
 
   launchStarlinkStrike(owner, enemy) {
@@ -1805,8 +1879,8 @@ export class GameScene {
     this.elements.bearing.textContent = `方位 ${Math.round((p1.heading * 180) / Math.PI + 360) % 360}`;
     this.elements.missionPhase.textContent = setupActive ? "场地布置" : this.modeInfo.phase;
     this.elements.altitude.textContent = `距离 ${Math.round(distanceXZ(p1, p2))} m`;
-    this.elements.weaponState.textContent = `P1 ${Math.round(p1.health)}% 生命 · ${this.energyStatusFor(p1)}`;
-    this.elements.comboState.textContent = `P2 ${Math.round(p2.health)}% 生命 · ${this.energyStatusFor(p2)}`;
+    this.elements.weaponState.textContent = `P1 ${this.weaponLabel(p1)} · ${Math.round(p1.health)}% 生命 · ${this.energyStatusFor(p1)}`;
+    this.elements.comboState.textContent = `P2 ${this.weaponLabel(p2)} · ${Math.round(p2.health)}% 生命 · ${this.energyStatusFor(p2)}`;
     this.elements.systemState.textContent = this.systemStateText(p1);
     this.elements.radioLine.textContent = this.radio;
     this.elements.hitMarker.classList.toggle("hit-marker--active", this.hitTimer > 0);
@@ -1851,7 +1925,7 @@ export class GameScene {
     if (!threat) return;
     const progress = THREE.MathUtils.clamp(threat.life / (threat.maxLife ?? STARLINK_FLIGHT_SECONDS), 0, 1);
     const attacker = this.vehicles.find((vehicle) => vehicle.id === threat.ownerId);
-    this.elements.starlinkBossLabel.textContent = `${attacker?.name ?? "对方"}已发射星链计划 · F 发射防空`;
+    this.elements.starlinkBossLabel.textContent = `${attacker?.name ?? "对方"}已发射星链计划 · 5 切防空后开火`;
     this.elements.starlinkBossFill.style.width = `${progress * 100}%`;
   }
 
@@ -1867,12 +1941,13 @@ export class GameScene {
   }
 
   starlinkStatusText() {
-    if (!this.navigationActive || !this.navigator) return "星链锁止";
-    const mode = this.starlinkModeLabel(this.navigator);
-    if (this.navigator.starlinkCooldown > 0) {
-      return `${mode}星链 ${Math.ceil(this.navigator.starlinkCooldown)}s`;
+    const vehicle = this.vehicles.find((item) => item.controller === "human1") ?? this.navigator;
+    if (!vehicle) return "星链锁止";
+    const mode = this.starlinkModeLabel(vehicle);
+    if (vehicle.starlinkCooldown > 0) {
+      return `${mode}星链 ${Math.ceil(vehicle.starlinkCooldown)}s`;
     }
-    return this.starlinkReadyFor(this.navigator) ? `${mode}星链待命` : "目标遮挡";
+    return this.starlinkReadyFor(vehicle) ? `${mode}星链远程待命` : "目标遮挡";
   }
 
   starlinkModeLabel(vehicle) {
@@ -2008,7 +2083,7 @@ export class GameScene {
 
   starlinkReadyFor(vehicle) {
     if (this.phase === "setup") return false;
-    if (!vehicle?.alive || !this.navigationActive || this.navigator !== vehicle) return false;
+    if (!vehicle?.alive) return false;
     return this.canActivateStarlink(vehicle);
   }
 

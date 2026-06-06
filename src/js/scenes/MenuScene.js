@@ -29,11 +29,12 @@ const TUTORIAL_STEPS = [
   },
   {
     title: "武器实践",
-    copy: "按 Space 射击，按 Q 发射雷管，按 R 发射滚珠轴承。注意能量会下降。",
+    copy: "按 1/2/3 切换主武器、雷管、滚珠轴承，再按 Space 执行当前武器。Q/R 仍可作为直接快捷键。",
     checks: [
-      { id: "space", label: "主武器 Space" },
-      { id: "q", label: "雷管 Q" },
-      { id: "r", label: "滚珠 R" },
+      { id: "1", label: "选择主武器 1" },
+      { id: "space", label: "执行 Space" },
+      { id: "2", label: "选择雷管 2" },
+      { id: "3", label: "选择滚珠 3" },
     ],
   },
   {
@@ -46,11 +47,11 @@ const TUTORIAL_STEPS = [
   },
   {
     title: "雷达和星链",
-    copy: "按 T 切换星链模式，按 E 呼叫星链，按 F 发射防空武器。完成后就可以进入实战。",
+    copy: "按 T 切换星链模式，按 4 选择远程星链，按 5 选择远程防空，再按 Space 执行。",
     checks: [
       { id: "t", label: "切换 T" },
-      { id: "e", label: "呼叫 E" },
-      { id: "f", label: "防空 F" },
+      { id: "4", label: "选择星链 4" },
+      { id: "5", label: "选择防空 5" },
     ],
   },
 ];
@@ -364,13 +365,16 @@ export class MenuScene {
     this.tutorial.keys.add(key);
     this.flashTutorialKey(key);
 
-    if (["w", "a", "s", "d", "shift", "g", "space", "q", "r", "t", "e", "f"].includes(key)) {
+    if (["w", "a", "s", "d", "shift", "g", "space", "q", "r", "t", "e", "f", "1", "2", "3", "4", "5"].includes(key)) {
       this.markTutorialCheck(key);
     }
     this.nudgeTutorialAvatar(key);
     if (key === "g") {
       this.elements.tutorialSpeedometer.classList.add("tutorial-range__speedometer--active");
       this.audio.beep({ frequency: 360, duration: 0.08, gain: 0.04 });
+    }
+    if (["1", "2", "3", "4", "5"].includes(key)) {
+      this.audio.beep({ frequency: 420 + Number(key) * 70, duration: 0.06, type: "triangle", gain: 0.04 });
     }
     if (key === "space") this.applyTutorialWeapon(12, 16);
     if (key === "q") this.applyTutorialWeapon(24, 30);
@@ -568,6 +572,11 @@ function tutorialKey(event) {
     KeyT: "t",
     KeyE: "e",
     KeyF: "f",
+    Digit1: "1",
+    Digit2: "2",
+    Digit3: "3",
+    Digit4: "4",
+    Digit5: "5",
     ShiftLeft: "shift",
     ShiftRight: "shift",
     Space: "space",
@@ -586,12 +595,17 @@ function tutorialKey(event) {
     keyt: "t",
     keye: "e",
     keyf: "f",
+    digit1: "1",
+    digit2: "2",
+    digit3: "3",
+    digit4: "4",
+    digit5: "5",
     shiftleft: "shift",
     shiftright: "shift",
   };
   if (aliasMap[key]) return aliasMap[key];
   if (key === " ") return "space";
-  if (["w", "a", "s", "d", "g", "q", "r", "t", "e", "f"].includes(key)) return key;
+  if (["w", "a", "s", "d", "g", "q", "r", "t", "e", "f", "1", "2", "3", "4", "5"].includes(key)) return key;
   return null;
 }
 
