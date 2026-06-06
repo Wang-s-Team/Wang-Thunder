@@ -1,5 +1,190 @@
 import * as THREE from "../../vendor/three.module.js";
 
+const DEFAULT_BUILDINGS = [
+  { name: "北侧指挥楼", x: -48, z: -32, width: 16, depth: 10, height: 7.2, rotation: 0.16, bunker: false },
+  { name: "中部雷达站", x: -10, z: -70, width: 14, depth: 18, height: 8.4, rotation: -0.08, bunker: false, dish: true },
+  { name: "东侧通讯塔楼", x: 38, z: -38, width: 12, depth: 12, height: 11.5, rotation: 0.22, bunker: false },
+  { name: "东线装甲库", x: 66, z: -102, width: 18, depth: 11, height: 6.8, rotation: -0.2, bunker: true },
+  { name: "西线仓库", x: -72, z: -126, width: 14, depth: 20, height: 8.2, rotation: 0.1, bunker: true },
+  { name: "中央弹药棚", x: -28, z: -160, width: 22, depth: 12, height: 6.4, rotation: -0.32, bunker: true },
+  { name: "南侧维修库", x: 28, z: -192, width: 14, depth: 16, height: 7.8, rotation: 0.14, bunker: true },
+  { name: "南线通讯楼", x: -2, z: -226, width: 18, depth: 10, height: 6.6, rotation: -0.18, bunker: false },
+  { name: "西南掩体", x: -92, z: -194, width: 12, depth: 13, height: 5.8, rotation: 0.3, bunker: true },
+  { name: "东南掩体", x: 94, z: -164, width: 13, depth: 12, height: 5.9, rotation: -0.26, bunker: true },
+  { name: "西北岗楼", x: -92, z: -42, width: 10, depth: 12, height: 9.6, rotation: -0.12, bunker: false },
+  { name: "跑道控制室", x: 18, z: 10, width: 13, depth: 9, height: 6.2, rotation: 0.28, bunker: false },
+];
+
+export const BATTLEFIELD_MAPS = [
+  {
+    id: "starlink-range",
+    name: "星链靶场",
+    briefing: "开阔跑道、雷达站和加固军库，适合远距离拉扯。",
+    seed: 1083,
+    terrainSeed: 7401,
+    background: 0x07090d,
+    fog: { color: 0x07090d, near: 150, far: 680 },
+    ground: { key: "range-ground", base: 0x151815, fleck: 0x5f7a6c, scratch: 0x040707 },
+    runway: { count: 56, startZ: 76, step: 10.8, x: 0, width: 22, depth: 6.1, color: 0x252b28, accentA: 0x43e0ff, accentB: 0xffd166 },
+    crateCount: 112,
+    barrierRows: 42,
+    craterCount: 90,
+    towerCount: 9,
+    ridgeColor: 0x101412,
+    moonColor: 0xffd166,
+    buildings: DEFAULT_BUILDINGS,
+    blue: { base: { x: -78, z: 28 }, vehicle: { x: -74, z: 24, heading: 0 } },
+    red: { base: { x: 78, z: -228 }, vehicle: { x: 74, z: -224, heading: Math.PI } },
+  },
+  {
+    id: "frozen-port",
+    name: "极地冻港",
+    briefing: "冰面港区被集装箱和冷却塔切成多条进攻路线。",
+    seed: 5531,
+    terrainSeed: 8129,
+    background: 0x061016,
+    fog: { color: 0x0a1921, near: 118, far: 560 },
+    ground: { key: "frozen-port-ground", base: 0x1d2728, fleck: 0x93c7cf, scratch: 0x081114 },
+    runway: { count: 42, startZ: 60, step: 12.4, x: -18, width: 18, depth: 6.4, color: 0x243238, accentA: 0x9be7ff, accentB: 0xfff0a6 },
+    crateCount: 136,
+    barrierRows: 34,
+    craterCount: 46,
+    towerCount: 7,
+    ridgeColor: 0x182225,
+    moonColor: 0x9be7ff,
+    buildings: [
+      { name: "冻港塔台", x: -64, z: -24, width: 14, depth: 12, height: 10.2, rotation: -0.08, bunker: false },
+      { name: "制冰机房", x: -24, z: -62, width: 22, depth: 13, height: 6.8, rotation: 0.18, bunker: true },
+      { name: "北岸冷库", x: 48, z: -46, width: 18, depth: 18, height: 8.4, rotation: -0.28, bunker: true },
+      { name: "东侧吊机座", x: 84, z: -94, width: 12, depth: 20, height: 11.2, rotation: 0.08, bunker: false },
+      { name: "破冰船坞", x: 28, z: -138, width: 24, depth: 15, height: 6.4, rotation: 0.34, bunker: true },
+      { name: "西线货栈", x: -76, z: -154, width: 16, depth: 24, height: 7.2, rotation: -0.22, bunker: true },
+      { name: "燃料泵站", x: 64, z: -188, width: 16, depth: 12, height: 6.2, rotation: 0.2, bunker: true },
+      { name: "南岸雷达棚", x: -18, z: -218, width: 17, depth: 11, height: 7.8, rotation: -0.16, bunker: false, dish: true },
+    ],
+    surfaces: [
+      { x: -58, z: -110, width: 28, depth: 260, rotation: 0.08, color: 0x0a3442, opacity: 0.48 },
+      { x: 96, z: -150, width: 18, depth: 190, rotation: -0.04, color: 0x0d3c4b, opacity: 0.42 },
+    ],
+    pieces: [
+      { kind: "container", name: "蓝色集装箱排", x: -104, z: -82, width: 9, depth: 24, height: 3.2, rotation: 0.12, color: 0x245d79, armor: 2 },
+      { kind: "container", name: "红色集装箱排", x: 104, z: -128, width: 9, depth: 28, height: 3.2, rotation: -0.18, color: 0x793a42, armor: 2 },
+      { kind: "silo", name: "冷却罐组", x: 8, z: -92, radius: 4.4, height: 10, color: 0x8ba7aa, armor: 2 },
+      { kind: "silo", name: "港区燃料罐", x: 46, z: -204, radius: 5.2, height: 8.5, color: 0x657477, armor: 3 },
+    ],
+    blue: { base: { x: -82, z: 30 }, vehicle: { x: -78, z: 25, heading: 0 } },
+    red: { base: { x: 82, z: -230 }, vehicle: { x: 78, z: -225, heading: Math.PI } },
+  },
+  {
+    id: "canyon-relay",
+    name: "峡谷中继站",
+    briefing: "峡谷山脊和通信塔形成硬掩体，中线争夺更激烈。",
+    seed: 9917,
+    terrainSeed: 2879,
+    background: 0x0c0b10,
+    fog: { color: 0x171113, near: 132, far: 610 },
+    ground: { key: "canyon-ground", base: 0x201a17, fleck: 0x9c6950, scratch: 0x090504 },
+    runway: { count: 36, startZ: 46, step: 13.2, x: 16, width: 16, depth: 5.4, color: 0x322820, accentA: 0xffd166, accentB: 0x43e0ff },
+    crateCount: 82,
+    barrierRows: 48,
+    craterCount: 72,
+    towerCount: 10,
+    ridgeColor: 0x2a201a,
+    moonColor: 0xffb05f,
+    buildings: [
+      { name: "北峡堡垒", x: -54, z: -36, width: 18, depth: 12, height: 8.8, rotation: 0.22, bunker: true },
+      { name: "谷口雷达站", x: 12, z: -66, width: 14, depth: 14, height: 9.5, rotation: -0.14, bunker: false, dish: true },
+      { name: "东坡观察塔", x: 72, z: -80, width: 10, depth: 12, height: 12.5, rotation: 0.08, bunker: false },
+      { name: "西坡弹药库", x: -90, z: -116, width: 15, depth: 22, height: 6.8, rotation: -0.26, bunker: true },
+      { name: "峡谷桥头堡", x: -12, z: -138, width: 24, depth: 11, height: 7.4, rotation: 0.38, bunker: true },
+      { name: "南坡维修棚", x: 58, z: -188, width: 19, depth: 14, height: 6.5, rotation: -0.32, bunker: true },
+      { name: "南峡通信楼", x: -34, z: -222, width: 16, depth: 12, height: 8.2, rotation: 0.12, bunker: false },
+    ],
+    pieces: [
+      { kind: "rockwall", name: "西侧断崖", x: -118, z: -126, width: 11, depth: 142, height: 9, rotation: -0.06, color: 0x3a2b23, armor: 4 },
+      { kind: "rockwall", name: "东侧断崖", x: 116, z: -92, width: 12, depth: 128, height: 10, rotation: 0.08, color: 0x352720, armor: 4 },
+      { kind: "rockwall", name: "中线落石", x: 28, z: -126, width: 10, depth: 28, height: 5.8, rotation: -0.34, color: 0x47352b, armor: 3 },
+    ],
+    blue: { base: { x: -76, z: 28 }, vehicle: { x: -72, z: 23, heading: 0 } },
+    red: { base: { x: 76, z: -228 }, vehicle: { x: 72, z: -223, heading: Math.PI } },
+  },
+  {
+    id: "ruined-city",
+    name: "废城街区",
+    briefing: "断楼、街垒和狭长路口制造近距离遭遇战。",
+    seed: 4219,
+    terrainSeed: 6653,
+    background: 0x080a0c,
+    fog: { color: 0x0c0f12, near: 105, far: 520 },
+    ground: { key: "ruined-city-ground", base: 0x17191a, fleck: 0x646b6f, scratch: 0x040405 },
+    runway: { count: 30, startZ: 38, step: 14.4, x: 0, width: 30, depth: 5.8, color: 0x25272a, accentA: 0x43e0ff, accentB: 0xff4f64 },
+    crateCount: 104,
+    barrierRows: 56,
+    craterCount: 118,
+    towerCount: 5,
+    ridgeColor: 0x161719,
+    moonColor: 0xc7d2d8,
+    buildings: [
+      { name: "北街断楼", x: -42, z: -28, width: 17, depth: 16, height: 13.2, rotation: 0.08, bunker: false },
+      { name: "商场残骸", x: 28, z: -54, width: 24, depth: 18, height: 9.4, rotation: -0.18, bunker: true },
+      { name: "地铁入口", x: -82, z: -82, width: 14, depth: 22, height: 5.8, rotation: 0.3, bunker: true },
+      { name: "东街公寓", x: 86, z: -112, width: 16, depth: 28, height: 14.4, rotation: 0.08, bunker: false },
+      { name: "中央街垒", x: -4, z: -132, width: 30, depth: 9, height: 5.6, rotation: -0.08, bunker: true },
+      { name: "西街车库", x: -64, z: -184, width: 20, depth: 18, height: 7.6, rotation: -0.22, bunker: true },
+      { name: "南区信号楼", x: 36, z: -216, width: 16, depth: 12, height: 11.2, rotation: 0.2, bunker: false, dish: true },
+    ],
+    pieces: [
+      { kind: "container", name: "公交残骸", x: 74, z: -154, width: 8, depth: 20, height: 3.5, rotation: 0.52, color: 0x5f635b, armor: 2 },
+      { kind: "container", name: "倒塌广告牌", x: -24, z: -94, width: 4, depth: 22, height: 3.2, rotation: -0.7, color: 0x324f5d, armor: 1 },
+      { kind: "rockwall", name: "碎石封锁线", x: -106, z: -132, width: 10, depth: 54, height: 4.2, rotation: 0.22, color: 0x3c3d3a, armor: 3 },
+    ],
+    blue: { base: { x: -80, z: 26 }, vehicle: { x: -76, z: 21, heading: 0 } },
+    red: { base: { x: 80, z: -226 }, vehicle: { x: 76, z: -221, heading: Math.PI } },
+  },
+  {
+    id: "desert-array",
+    name: "沙漠阵列",
+    briefing: "太阳能阵列、油罐和沙丘让视线时开时合。",
+    seed: 7349,
+    terrainSeed: 1901,
+    background: 0x100d0a,
+    fog: { color: 0x1b1410, near: 138, far: 640 },
+    ground: { key: "desert-array-ground", base: 0x211a12, fleck: 0xb3834f, scratch: 0x130b06 },
+    runway: { count: 40, startZ: 62, step: 12.2, x: 20, width: 20, depth: 5.6, color: 0x352817, accentA: 0xffd166, accentB: 0x43e0ff },
+    crateCount: 74,
+    barrierRows: 38,
+    craterCount: 62,
+    towerCount: 8,
+    ridgeColor: 0x2a2015,
+    moonColor: 0xffc36e,
+    buildings: [
+      { name: "北侧泵站", x: -58, z: -26, width: 16, depth: 13, height: 6.8, rotation: -0.16, bunker: true },
+      { name: "太阳阵列控制室", x: 18, z: -58, width: 15, depth: 14, height: 7.4, rotation: 0.24, bunker: false, dish: true },
+      { name: "东线油库", x: 82, z: -98, width: 18, depth: 16, height: 7.8, rotation: -0.14, bunker: true },
+      { name: "西线砂堡", x: -92, z: -132, width: 16, depth: 24, height: 6.4, rotation: 0.18, bunker: true },
+      { name: "中线逆变站", x: 0, z: -154, width: 24, depth: 12, height: 6.9, rotation: -0.38, bunker: true },
+      { name: "南侧维修棚", x: 52, z: -206, width: 17, depth: 15, height: 6.6, rotation: 0.26, bunker: true },
+      { name: "沙丘哨楼", x: -42, z: -228, width: 11, depth: 12, height: 10.4, rotation: -0.1, bunker: false },
+    ],
+    pieces: [
+      { kind: "silo", name: "东侧油罐", x: 104, z: -174, radius: 5.5, height: 9.2, color: 0x6a5a43, armor: 3 },
+      { kind: "silo", name: "西侧水塔", x: -110, z: -74, radius: 4.2, height: 12, color: 0x5f6b66, armor: 2 },
+      { kind: "array", name: "太阳能板阵列", x: -38, z: -100, width: 36, depth: 16, height: 1.2, rotation: 0.12, color: 0x101c24, armor: 1 },
+      { kind: "array", name: "南侧太阳能阵列", x: 30, z: -176, width: 42, depth: 14, height: 1.2, rotation: -0.2, color: 0x101c24, armor: 1 },
+    ],
+    blue: { base: { x: -78, z: 30 }, vehicle: { x: -74, z: 25, heading: 0 } },
+    red: { base: { x: 78, z: -230 }, vehicle: { x: 74, z: -225, heading: Math.PI } },
+  },
+];
+
+export function randomBattlefieldMap() {
+  return BATTLEFIELD_MAPS[Math.floor(Math.random() * BATTLEFIELD_MAPS.length)] ?? BATTLEFIELD_MAPS[0];
+}
+
+export function battlefieldMapById(id) {
+  return BATTLEFIELD_MAPS.find((map) => map.id === id) ?? BATTLEFIELD_MAPS[0];
+}
+
 export function makeTank(options = {}) {
   const group = new THREE.Group();
   group.name = "CopperPlate MBT";
@@ -518,7 +703,8 @@ function addLimb(group, start, end, radius, material) {
   return limb;
 }
 
-export function makeBattlefield() {
+export function makeBattlefield(mapConfig = BATTLEFIELD_MAPS[0]) {
+  const config = typeof mapConfig === "string" ? battlefieldMapById(mapConfig) : mapConfig ?? BATTLEFIELD_MAPS[0];
   const group = new THREE.Group();
   const navBlockers = [];
   const attackBlockers = [];
@@ -531,7 +717,7 @@ export function makeBattlefield() {
   const fieldMaxZ = field.centerZ + field.depth / 2;
 
   const terrainGeometry = new THREE.PlaneGeometry(field.width, field.depth, 168, 212);
-  const terrainRandom = seededRandom(7401);
+  const terrainRandom = seededRandom(config.terrainSeed ?? 7401);
   const positions = terrainGeometry.attributes.position;
   for (let i = 0; i < positions.count; i += 1) {
     const x = positions.getX(i);
@@ -541,49 +727,52 @@ export function makeBattlefield() {
   }
   terrainGeometry.computeVertexNormals();
 
-  const ground = new THREE.Mesh(terrainGeometry, makeGroundMaterial(field.width, field.depth));
+  const ground = new THREE.Mesh(terrainGeometry, makeGroundMaterial(field.width, field.depth, config.ground));
   ground.rotation.x = -Math.PI / 2;
   ground.position.z = field.centerZ;
   ground.receiveShadow = true;
   group.add(ground);
 
-  const grid = new THREE.GridHelper(field.width, 124, 0x52685f, 0x24302c);
+  const grid = new THREE.GridHelper(field.width, 124, config.gridMajor ?? 0x52685f, config.gridMinor ?? 0x24302c);
   grid.position.y = 0.03;
   grid.position.z = field.centerZ;
   group.add(grid);
 
+  addMapSurfaces(group, config.surfaces ?? []);
+
+  const runway = config.runway ?? BATTLEFIELD_MAPS[0].runway;
   const plateMaterial = new THREE.MeshStandardMaterial({
-    color: 0x252b28,
-    map: makeArmorTexture("runway-plate", 0x242923, 0x52685f),
+    color: runway.color ?? 0x252b28,
+    map: makeArmorTexture(`${config.id ?? "battlefield"}-runway-plate`, runway.color ?? 0x242923, runway.accentA ?? 0x52685f),
     roughness: 0.8,
     metalness: 0.16,
   });
-  for (let i = 0; i < 56; i += 1) {
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(22, 0.05, 6.1), plateMaterial);
-    plate.position.set(0, 0.06, 76 - i * 10.8);
+  for (let i = 0; i < runway.count; i += 1) {
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(runway.width, 0.05, runway.depth), plateMaterial);
+    plate.position.set(runway.x ?? 0, 0.06, runway.startZ - i * runway.step);
     plate.receiveShadow = true;
     group.add(plate);
 
     if (i % 2 === 0) {
-      for (const x of [-13.6, 13.6]) {
+      for (const x of [-(runway.width * 0.62), runway.width * 0.62]) {
         const stripe = new THREE.Mesh(
-          new THREE.BoxGeometry(0.22, 0.06, 4.2),
-          new THREE.MeshBasicMaterial({ color: x < 0 ? 0x43e0ff : 0xffd166, transparent: true, opacity: 0.7 }),
+          new THREE.BoxGeometry(0.22, 0.06, runway.depth * 0.68),
+          new THREE.MeshBasicMaterial({ color: x < 0 ? runway.accentA : runway.accentB, transparent: true, opacity: 0.7 }),
         );
-        stripe.position.set(x, 0.1, 76 - i * 10.8);
+        stripe.position.set((runway.x ?? 0) + x, 0.1, runway.startZ - i * runway.step);
         group.add(stripe);
       }
     }
   }
 
-  const rand = seededRandom(1083);
+  const rand = seededRandom(config.seed ?? 1083);
   const crateMaterial = new THREE.MeshStandardMaterial({
     color: 0x3b352b,
-    map: makeArmorTexture("supply-crate", 0x3b352b, 0x7e7462),
+    map: makeArmorTexture(`${config.id ?? "battlefield"}-supply-crate`, 0x3b352b, 0x7e7462),
     roughness: 0.9,
     metalness: 0.05,
   });
-  for (let i = 0; i < 112; i += 1) {
+  for (let i = 0; i < (config.crateCount ?? 112); i += 1) {
     const size = 1.8 + rand() * 2.6;
     const crate = new THREE.Mesh(new THREE.BoxGeometry(size, 1.0 + rand() * 1.4, size * (0.75 + rand() * 0.55)), crateMaterial);
     crate.position.set((rand() < 0.5 ? -1 : 1) * (34 + rand() * 255), 0.78, fieldMaxZ - 34 - rand() * (field.depth - 84));
@@ -595,7 +784,7 @@ export function makeBattlefield() {
   }
 
   const barrierMaterial = new THREE.MeshStandardMaterial({ color: 0x54564e, roughness: 0.86, metalness: 0.05 });
-  for (let i = 0; i < 42; i += 1) {
+  for (let i = 0; i < (config.barrierRows ?? 42); i += 1) {
     for (const side of [-1, 1]) {
       const barrier = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.85, 0.8), barrierMaterial);
       barrier.position.set(side * (22 + (i % 3) * 3.8), 0.45, 62 - i * 11.4);
@@ -621,20 +810,7 @@ export function makeBattlefield() {
   });
   const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x151a18, roughness: 0.78, metalness: 0.26 });
   const slitMaterial = new THREE.MeshBasicMaterial({ color: 0x43e0ff, transparent: true, opacity: 0.55 });
-  const buildingPlans = [
-    { name: "北侧指挥楼", x: -48, z: -32, width: 16, depth: 10, height: 7.2, rotation: 0.16, bunker: false },
-    { name: "中部雷达站", x: -10, z: -70, width: 14, depth: 18, height: 8.4, rotation: -0.08, bunker: false, dish: true },
-    { name: "东侧通讯塔楼", x: 38, z: -38, width: 12, depth: 12, height: 11.5, rotation: 0.22, bunker: false },
-    { name: "东线装甲库", x: 66, z: -102, width: 18, depth: 11, height: 6.8, rotation: -0.2, bunker: true },
-    { name: "西线仓库", x: -72, z: -126, width: 14, depth: 20, height: 8.2, rotation: 0.1, bunker: true },
-    { name: "中央弹药棚", x: -28, z: -160, width: 22, depth: 12, height: 6.4, rotation: -0.32, bunker: true },
-    { name: "南侧维修库", x: 28, z: -192, width: 14, depth: 16, height: 7.8, rotation: 0.14, bunker: true },
-    { name: "南线通讯楼", x: -2, z: -226, width: 18, depth: 10, height: 6.6, rotation: -0.18, bunker: false },
-    { name: "西南掩体", x: -92, z: -194, width: 12, depth: 13, height: 5.8, rotation: 0.3, bunker: true },
-    { name: "东南掩体", x: 94, z: -164, width: 13, depth: 12, height: 5.9, rotation: -0.26, bunker: true },
-    { name: "西北岗楼", x: -92, z: -42, width: 10, depth: 12, height: 9.6, rotation: -0.12, bunker: false },
-    { name: "跑道控制室", x: 18, z: 10, width: 13, depth: 9, height: 6.2, rotation: 0.28, bunker: false },
-  ];
+  const buildingPlans = config.buildings ?? DEFAULT_BUILDINGS;
 
   for (const plan of buildingPlans) {
     const building = makeHardenedBuilding(plan, {
@@ -658,6 +834,8 @@ export function makeBattlefield() {
     attackBlockers.push(blocker);
   }
 
+  addSpecialMapPieces(group, config.pieces ?? [], navBlockers, attackBlockers);
+
   const scorchMaterial = new THREE.MeshBasicMaterial({
     color: 0x060707,
     transparent: true,
@@ -665,7 +843,7 @@ export function makeBattlefield() {
     side: THREE.DoubleSide,
     depthWrite: false,
   });
-  for (let i = 0; i < 90; i += 1) {
+  for (let i = 0; i < (config.craterCount ?? 90); i += 1) {
     const crater = new THREE.Mesh(new THREE.RingGeometry(1.5 + rand() * 1.2, 2.2 + rand() * 1.8, 32), scorchMaterial.clone());
     crater.position.set((rand() - 0.5) * 520, 0.11, fieldMaxZ - 46 - rand() * (field.depth - 120));
     crater.rotation.x = -Math.PI / 2;
@@ -675,7 +853,7 @@ export function makeBattlefield() {
 
   const towerMaterial = new THREE.MeshStandardMaterial({ color: 0x2d3936, roughness: 0.76, metalness: 0.22 });
   for (const side of [-1, 1]) {
-    for (let i = 0; i < 9; i += 1) {
+    for (let i = 0; i < (config.towerCount ?? 9); i += 1) {
       const tower = new THREE.Group();
       const mast = new THREE.Mesh(new THREE.BoxGeometry(0.35, 6 + i, 0.35), towerMaterial);
       mast.position.y = 3 + i * 0.5;
@@ -715,7 +893,7 @@ export function makeBattlefield() {
   group.add(dish);
   navBlockers.push({ x: dish.position.x, z: dish.position.z, radius: 5.4 });
 
-  const ridgeMaterial = new THREE.MeshStandardMaterial({ color: 0x101412, roughness: 0.96, metalness: 0.02 });
+  const ridgeMaterial = new THREE.MeshStandardMaterial({ color: config.ridgeColor ?? 0x101412, roughness: 0.96, metalness: 0.02 });
   for (let i = 0; i < 34; i += 1) {
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(2.5 + rand() * 4.5, 0), ridgeMaterial);
     rock.position.set(-300 + i * 18 + rand() * 8, 1.4, fieldMinZ + 22 - rand() * 30);
@@ -728,14 +906,14 @@ export function makeBattlefield() {
 
   const moon = new THREE.Mesh(
     new THREE.SphereGeometry(9, 36, 18),
-    new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.22 }),
+    new THREE.MeshBasicMaterial({ color: config.moonColor ?? 0xffd166, transparent: true, opacity: 0.22 }),
   );
   moon.position.set(124, 62, -430);
   group.add(moon);
 
   const moonHalo = new THREE.Mesh(
     new THREE.RingGeometry(11, 14, 48),
-    new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.08, side: THREE.DoubleSide }),
+    new THREE.MeshBasicMaterial({ color: config.moonColor ?? 0xffd166, transparent: true, opacity: 0.08, side: THREE.DoubleSide }),
   );
   moonHalo.position.copy(moon.position);
   moonHalo.lookAt(0, 20, 0);
@@ -744,6 +922,7 @@ export function makeBattlefield() {
   group.add(makeStarfield(rand, field));
   group.userData.navBlockers = navBlockers;
   group.userData.attackBlockers = attackBlockers;
+  group.userData.map = config;
 
   return group;
 }
@@ -805,6 +984,165 @@ function makeHardenedBuilding(plan, materials) {
     group.add(dish);
   }
 
+  return group;
+}
+
+function addMapSurfaces(group, surfaces) {
+  for (const surface of surfaces) {
+    const material = new THREE.MeshBasicMaterial({
+      color: surface.color ?? 0x0a3442,
+      transparent: true,
+      opacity: surface.opacity ?? 0.35,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(surface.width, surface.depth), material);
+    mesh.position.set(surface.x, 0.075, surface.z);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.rotation.z = surface.rotation ?? 0;
+    group.add(mesh);
+  }
+}
+
+function addSpecialMapPieces(group, pieces, navBlockers, attackBlockers) {
+  for (const piece of pieces) {
+    const object = makeSpecialMapPiece(piece);
+    if (!object) continue;
+    group.add(object);
+
+    const radius = piece.radius
+      ? piece.radius + 1
+      : Math.hypot(piece.width ?? 8, piece.depth ?? 8) * 0.42 + 0.8;
+    const blocker = {
+      name: piece.name,
+      x: piece.x,
+      z: piece.z,
+      radius,
+      height: piece.height ?? 4,
+      armor: piece.armor ?? 1,
+    };
+    navBlockers.push(blocker);
+    attackBlockers.push(blocker);
+  }
+}
+
+function makeSpecialMapPiece(piece) {
+  if (piece.kind === "silo") return makeSiloPiece(piece);
+  if (piece.kind === "array") return makeSolarArrayPiece(piece);
+  return makeBlockadePiece(piece);
+}
+
+function makeBlockadePiece(piece) {
+  const group = new THREE.Group();
+  group.name = piece.name ?? "Map Blockade";
+  group.position.set(piece.x, 0, piece.z);
+  group.rotation.y = piece.rotation ?? 0;
+
+  const material = new THREE.MeshStandardMaterial({
+    color: piece.color ?? 0x555a58,
+    roughness: piece.kind === "rockwall" ? 0.94 : 0.78,
+    metalness: piece.kind === "container" ? 0.16 : 0.04,
+  });
+  const width = piece.width ?? 8;
+  const depth = piece.depth ?? 16;
+  const height = piece.height ?? 4;
+
+  if (piece.kind === "rockwall") {
+    const rand = seededRandom(hashString(piece.name ?? `${piece.x}:${piece.z}`));
+    for (let i = 0; i < 9; i += 1) {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(2.2 + rand() * 2.4, 0), material);
+      rock.position.set((rand() - 0.5) * width, 1.1 + rand() * height * 0.25, (rand() - 0.5) * depth);
+      rock.scale.set(1.2 + rand() * 1.6, 0.65 + rand() * 1.4, 0.8 + rand() * 1.5);
+      rock.rotation.set(rand() * 0.6, rand() * Math.PI, rand() * 0.45);
+      rock.castShadow = true;
+      rock.receiveShadow = true;
+      group.add(rock);
+    }
+    return group;
+  }
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
+  body.position.y = height / 2;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  const stripeMaterial = new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.44 });
+  for (const y of [height * 0.34, height * 0.68]) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(width + 0.08, 0.12, 0.08), stripeMaterial);
+    stripe.position.set(0, y, -depth / 2 - 0.05);
+    group.add(stripe);
+  }
+  return group;
+}
+
+function makeSiloPiece(piece) {
+  const group = new THREE.Group();
+  group.name = piece.name ?? "Silo";
+  group.position.set(piece.x, 0, piece.z);
+  const radius = piece.radius ?? 4;
+  const height = piece.height ?? 8;
+  const wallMaterial = new THREE.MeshStandardMaterial({ color: piece.color ?? 0x6d7778, roughness: 0.72, metalness: 0.22 });
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x171b1b, roughness: 0.8, metalness: 0.18 });
+
+  const tank = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 1.04, height, 36), wallMaterial);
+  tank.position.y = height / 2;
+  tank.castShadow = true;
+  tank.receiveShadow = true;
+  group.add(tank);
+
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.02, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), wallMaterial);
+  cap.position.y = height;
+  cap.castShadow = true;
+  group.add(cap);
+
+  for (let i = 0; i < 3; i += 1) {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.03, 0.08, 8, 42), darkMaterial);
+    band.position.y = 1.8 + i * (height * 0.27);
+    band.rotation.x = Math.PI / 2;
+    group.add(band);
+  }
+  return group;
+}
+
+function makeSolarArrayPiece(piece) {
+  const group = new THREE.Group();
+  group.name = piece.name ?? "Solar Array";
+  group.position.set(piece.x, 0, piece.z);
+  group.rotation.y = piece.rotation ?? 0;
+
+  const panelMaterial = new THREE.MeshStandardMaterial({
+    color: piece.color ?? 0x101c24,
+    emissive: 0x09202a,
+    emissiveIntensity: 0.15,
+    roughness: 0.46,
+    metalness: 0.28,
+  });
+  const frameMaterial = new THREE.MeshStandardMaterial({ color: 0x4a514b, roughness: 0.72, metalness: 0.22 });
+  const rows = 2;
+  const cols = 4;
+  const panelWidth = (piece.width ?? 32) / cols - 0.9;
+  const panelDepth = (piece.depth ?? 14) / rows - 0.8;
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(panelWidth, 0.18, panelDepth), panelMaterial);
+      panel.position.set(
+        (col - (cols - 1) / 2) * (panelWidth + 0.9),
+        1.05 + row * 0.12,
+        (row - (rows - 1) / 2) * (panelDepth + 0.8),
+      );
+      panel.rotation.x = -0.18;
+      panel.castShadow = true;
+      panel.receiveShadow = true;
+      group.add(panel);
+    }
+  }
+
+  const mast = new THREE.Mesh(new THREE.BoxGeometry(piece.width ?? 32, 0.18, 0.28), frameMaterial);
+  mast.position.y = 0.64;
+  mast.castShadow = true;
+  group.add(mast);
   return group;
 }
 
@@ -1303,23 +1641,26 @@ function makeSkinTexture(key, baseColor) {
   return texture;
 }
 
-function makeGroundMaterial(width = 280, depth = 380) {
+function makeGroundMaterial(width = 280, depth = 380, theme = {}) {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
   canvas.height = 512;
   const ctx = canvas.getContext("2d");
-  const rand = seededRandom(9217);
-  ctx.fillStyle = "#151815";
+  const rand = seededRandom(hashString(theme.key ?? "ground"));
+  const base = theme.base ?? 0x151815;
+  const fleck = theme.fleck ?? 0x5f7a6c;
+  const scratch = theme.scratch ?? 0x040707;
+  ctx.fillStyle = hexStyle(base);
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   for (let i = 0; i < 7000; i += 1) {
-    const green = 18 + Math.floor(rand() * 24);
+    const drift = Math.floor(rand() * 28);
     const alpha = 0.04 + rand() * 0.1;
-    ctx.fillStyle = `rgba(${green}, ${green + 8}, ${green + 4}, ${alpha})`;
+    ctx.fillStyle = rgbaStyle(mixColor(base, fleck, 0.25 + rand() * 0.55, drift), alpha);
     ctx.fillRect(rand() * 512, rand() * 512, 1 + rand() * 3, 1 + rand() * 3);
   }
 
-  ctx.strokeStyle = "rgba(95, 122, 108, 0.16)";
+  ctx.strokeStyle = rgbaStyle(fleck, 0.16);
   ctx.lineWidth = 1;
   for (let x = 0; x < 512; x += 32) {
     ctx.beginPath();
@@ -1334,7 +1675,7 @@ function makeGroundMaterial(width = 280, depth = 380) {
     ctx.stroke();
   }
 
-  ctx.strokeStyle = "rgba(4, 7, 7, 0.34)";
+  ctx.strokeStyle = rgbaStyle(scratch, 0.34);
   ctx.lineWidth = 2;
   for (let i = 0; i < 52; i += 1) {
     const x = rand() * 512;
@@ -1388,6 +1729,20 @@ function rgbaStyle(color, alpha) {
   const g = (color >> 8) & 255;
   const b = color & 255;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function mixColor(a, b, ratio, drift = 0) {
+  const amount = THREE.MathUtils.clamp(ratio, 0, 1);
+  const ar = (a >> 16) & 255;
+  const ag = (a >> 8) & 255;
+  const ab = a & 255;
+  const br = (b >> 16) & 255;
+  const bg = (b >> 8) & 255;
+  const bb = b & 255;
+  const r = THREE.MathUtils.clamp(Math.round(ar + (br - ar) * amount + drift), 0, 255);
+  const g = THREE.MathUtils.clamp(Math.round(ag + (bg - ag) * amount + drift), 0, 255);
+  const bl = THREE.MathUtils.clamp(Math.round(ab + (bb - ab) * amount + drift), 0, 255);
+  return (r << 16) | (g << 8) | bl;
 }
 
 function hashString(value) {
