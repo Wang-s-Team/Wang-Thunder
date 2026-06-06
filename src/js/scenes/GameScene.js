@@ -88,6 +88,10 @@ export class GameScene {
     this.pointerNdc = new THREE.Vector2();
     this.cameraDirection = new THREE.Vector3();
     this.p2Camera = null;
+    this.handleStrategicMapPointerDown = this.onStrategicMapPointerDown.bind(this);
+    this.handleStrategicMapContextMenu = this.onStrategicMapContextMenu.bind(this);
+    this.elements.strategicMap?.addEventListener("pointerdown", this.handleStrategicMapPointerDown);
+    this.elements.strategicMap?.addEventListener("contextmenu", this.handleStrategicMapContextMenu);
   }
 
   enter(payload = {}) {
@@ -201,10 +205,11 @@ export class GameScene {
     this.elements.pause.classList.remove("pause-layer--active");
     this.pushLog(`${this.modeInfo.name} 已启动`);
     this.pushLog(`地图：${this.mapConfig.name} - ${this.mapConfig.briefing}`);
-    this.pushLog("开局前进入场地布置，双方可部署超声波测速器");
+    this.pushLog("开局前进入场地布置，双方需在大地图上部署超声波测速器");
     this.pushLog("点击画面锁定鼠标，WASD 移动，1-5 切换武器，左键/空格执行当前武器");
     this.pushLog("武器槽：1 主武器 · 2 雷管 · 3 滚珠轴承 · 4 远程星链 · 5 远程防空");
     this.pushLog("X 触发核能，C 穿铅服 30s；未穿铅服会被核污染持续掉血");
+    this.pushLog("布置阶段：在大地图左键部署蓝方测速器，右键部署红方测速器");
     this.pushLog("本地双人 P2 使用 6-0 切换同款武器槽，Enter 执行当前武器");
     if (this.mode === "online") {
       this.pushLog("在线 PK 使用人机对战同款本机快捷键，远端玩家不占用本地 P2 键位");
@@ -225,6 +230,42 @@ export class GameScene {
     this.elements.pause.classList.remove("pause-layer--active");
     this.input.releasePointerLock?.();
     this.disposeScene();
+  }
+
+  onStrategicMapContextMenu(event) {
+    event.preventDefault();
+  }
+
+  onStrategicMapPointerDown(event) {
+    if (this.phase !== "setup" || this.paused || this.finished) return;
+    const point = this.strategicMapPointFromEvent(event);
+    if (!point) return;
+
+    if (event.button === 0) {
+      const vehicle = this.vehicles.find((item) => item.id === 1 && item.controller.startsWith("human"));
+      if (vehicle) this.deploySpeedometerAt(vehicle, point);
+      event.preventDefault();
+      return;
+    }
+
+    if (event.button === 2) {
+      const vehicle = this.vehicles.find((item) => item.id === 2 && item.controller.startsWith("human"));
+      if (vehicle) this.deploySpeedometerAt(vehicle, point);
+      event.preventDefault();
+    }
+  }
+
+  strategicMapPointFromEvent(event) {
+    const map = this.elements.strategicMap;
+    if (!map) return null;
+    const rect = map.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const localX = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const localY = THREE.MathUtils.clamp((event.clientY - rect.top) / rect.height, 0, 1);
+    return {
+      x: THREE.MathUtils.lerp(-ARENA.x, ARENA.x, localX),
+      z: THREE.MathUtils.lerp(ARENA.zMin, ARENA.zMax, localY),
+    };
   }
 
   resize(width, height) {
@@ -456,7 +497,7 @@ export class GameScene {
       this.updatePlacementCursor(vehicle, dt);
       if (this.input.consumeDeployFor(vehicle.id)) {
         const cursor = this.placementCursorFor(vehicle.id);
-        this.deploySpeedometerAt(vehicle, cursor ?? { x: vehicle.x, z: vehicle.z });
+        this.deploySpeedometerAt(vehicle, cursor ?? this.autoDeployPointFor(vehicle));
       }
     }
 
@@ -469,23 +510,6 @@ export class GameScene {
   updatePlacementCursor(vehicle, dt) {
     const cursor = this.placementCursorFor(vehicle.id);
     if (!cursor || cursor.placed) return;
-
-    if (vehicle.controller === "human1") {
-      const pointerPoint = this.input.pointerLocked
-        ? this.centerAimPoint(vehicle)
-        : this.pointerWorldPoint();
-      if (pointerPoint && this.input.pointer.moved) {
-        cursor.x = THREE.MathUtils.lerp(cursor.x, pointerPoint.x, Math.min(1, dt * 12));
-        cursor.z = THREE.MathUtils.lerp(cursor.z, pointerPoint.z, Math.min(1, dt * 12));
-      }
-    }
-
-    const axis = this.input.axisFor(vehicle.id);
-    const length = Math.hypot(axis.x, axis.y);
-    if (length > 0.05) {
-      cursor.x = THREE.MathUtils.clamp(cursor.x + (axis.x / length) * DEPLOY_CURSOR_SPEED * dt, -ARENA.x, ARENA.x);
-      cursor.z = THREE.MathUtils.clamp(cursor.z + (axis.y / length) * DEPLOY_CURSOR_SPEED * dt, ARENA.zMin, ARENA.zMax);
-    }
 
     const enemy = this.enemyOf(vehicle);
     cursor.group.position.set(cursor.x, 0.08, cursor.z);
@@ -2143,7 +2167,7 @@ export class GameScene {
     if (!active) return;
     const statuses = this.vehicles.map((vehicle) => {
       const deployed = this.speedometerFor(vehicle.id);
-      return `${vehicle.id === 1 ? "蓝方" : "红方"}${deployed ? "已部署" : "待部署"}`;
+      return `${vehicle.id === 1 ? "蓝方" : "红方"}${deployed ? "已部署" : "待部署(大地图)"}`;
     });
     this.elements.setupTime.textContent = `${Math.ceil(this.setupTime)}s`;
     this.elements.setupStatus.textContent = statuses.join(" · ");
