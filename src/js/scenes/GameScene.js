@@ -2246,22 +2246,17 @@ export class GameScene {
   }
 
   updateRadar() {
-    const primaryThreat = this.incomingStarlinkFor(this.vehicles[0]);
-    const navigator = this.navigator ?? (primaryThreat ? this.vehicles[0] : null);
-    const threatTracking = Boolean(primaryThreat && navigator);
-    this.elements.radar.classList.toggle("radar--offline", !this.navigationActive && !threatTracking);
-    this.elements.radar.classList.toggle("radar--starlink-ready", this.starlinkReadyFor(navigator));
-    if (!navigator) {
+    const operator = this.activeRadarOperator();
+    this.elements.radar.classList.toggle("radar--offline", !operator);
+    this.elements.radar.classList.toggle("radar--starlink-ready", this.starlinkReadyFor(operator));
+    if (!operator) {
       this.elements.radarBlips.innerHTML = "";
       return;
     }
 
-    const navBase = this.baseOf(navigator);
-    const starlinkReady = this.starlinkReadyFor(navigator);
-    const starlinkTarget = this.enemyOf(navigator);
-    const starlinkTracks = this.activeStarlinks
-      .filter((strike) => strike.ownerId !== navigator.id || this.hasLineOfSight(navBase, strike.position))
-      .map((strike) => this.radarTrackFor(strike));
+    const starlinkReady = this.starlinkReadyFor(operator);
+    const starlinkTarget = this.enemyOf(operator);
+    const starlinkTracks = this.activeStarlinks.map((strike) => this.radarTrackFor(strike));
     const dots = [
       ...this.bases.map((base) => ({ x: base.x, z: base.z, kind: base.ownerId === 1 ? "base-blue" : "base-red" })),
       ...this.deployables.map((item) => ({
@@ -2269,27 +2264,25 @@ export class GameScene {
         z: item.z,
         kind: item.ownerId === 1 ? "speedometer-blue" : "speedometer-red",
       })),
-      ...this.vehicles
-        .filter((vehicle) => this.hasLineOfSight(navBase, vehicle))
-        .map((vehicle) => ({
-          x: vehicle.x,
-          z: vehicle.z,
-          kind: starlinkReady && vehicle === starlinkTarget ? "starlink-target" : vehicle.id === 1 ? "blue" : "red",
-        })),
+      ...this.vehicles.map((vehicle) => ({
+        x: vehicle.x,
+        z: vehicle.z,
+        kind: starlinkReady && vehicle === starlinkTarget ? "starlink-target" : vehicle.id === 1 ? "blue" : "red",
+      })),
       ...this.projectiles.map((projectile) => ({
         x: projectile.position.x,
         z: projectile.position.z,
         kind: projectile.userData.owner === 1 ? "shot-blue" : "shot-red",
-      })).filter((projectile) => navBase && this.hasLineOfSight(navBase, projectile)),
+      })),
       ...this.activeStarlinks.map((strike) => ({
         x: strike.position.x,
         z: strike.position.z,
-        kind: strike.targetId === navigator.id ? "starlink-incoming" : "starlink-outgoing",
+        kind: strike.targetId === operator.id ? "starlink-incoming" : "starlink-outgoing",
       })),
       ...this.antiAirMissiles.map((missile) => ({
         x: missile.group.position.x,
         z: missile.group.position.z,
-        kind: missile.ownerId === navigator.id ? "interceptor" : "shot-red",
+        kind: missile.ownerId === operator.id ? "interceptor" : "shot-red",
       })),
     ];
     const centerZ = ARENA_CENTER_Z;
@@ -2299,8 +2292,7 @@ export class GameScene {
         if (!track) return "";
         return `<span class="radar__track radar__track--${track.hostile ? "hostile" : "friendly"}" style="left:${track.left}%;top:${track.top}%;width:${track.width}%;transform:rotate(${track.angle}deg)"></span>`;
       }),
-      ...dots
-      .map((dot) => {
+      ...dots.map((dot) => {
         const left = THREE.MathUtils.clamp(50 + (dot.x / ARENA.x) * 42, 8, 92);
         const top = THREE.MathUtils.clamp(50 + ((dot.z - centerZ) / halfZ) * 42, 8, 92);
         return `<span class="radar__blip radar__blip--${dot.kind}" style="left:${left}%;top:${top}%"></span>`;
@@ -2316,7 +2308,7 @@ export class GameScene {
     const endLeft = THREE.MathUtils.clamp(50 + (strike.target.x / ARENA.x) * 42, 8, 92);
     const endTop = THREE.MathUtils.clamp(50 + ((strike.target.z - centerZ) / halfZ) * 42, 8, 92);
     return {
-      hostile: strike.targetId === this.navigator?.id,
+      hostile: strike.targetId === this.activeRadarOperator()?.id,
       left: startLeft,
       top: startTop,
       width: Math.hypot(endLeft - startLeft, endTop - startTop),
@@ -2328,6 +2320,14 @@ export class GameScene {
     if (this.phase === "setup") return false;
     if (!vehicle?.alive) return false;
     return this.canActivateStarlink(vehicle);
+  }
+
+  activeRadarOperator() {
+    const primaryHuman = this.vehicles.find((vehicle) => vehicle.alive && vehicle.controller === "human1");
+    if (primaryHuman) return primaryHuman;
+    const anyHuman = this.vehicles.find((vehicle) => vehicle.alive && vehicle.controller.startsWith("human"));
+    if (anyHuman) return anyHuman;
+    return this.navigator ?? this.vehicles.find((vehicle) => vehicle.alive) ?? null;
   }
 
   activeNavigator() {
