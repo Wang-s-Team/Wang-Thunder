@@ -1460,6 +1460,24 @@ h1 {
   background: var(--red);
 }
 
+.strategic-map__blip--merc-blue,
+.strategic-map__blip--merc-red {
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  background: rgba(11, 15, 18, 0.78);
+  transform: translate(-50%, -50%) rotate(45deg);
+  border-radius: 2px;
+}
+
+.strategic-map__blip--merc-blue {
+  color: var(--cyan);
+}
+
+.strategic-map__blip--merc-red {
+  color: var(--red);
+}
+
 .strategic-map__blip--base-blue,
 .strategic-map__blip--base-red {
   width: 14px;
@@ -1647,6 +1665,24 @@ h1 {
 .radar__blip--red,
 .radar__blip--shot-red {
   background: var(--red);
+}
+
+.radar__blip--merc-blue,
+.radar__blip--merc-red {
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  background: rgba(11, 15, 18, 0.78);
+  transform: translate(-50%, -50%) rotate(45deg);
+  border-radius: 2px;
+}
+
+.radar__blip--merc-blue {
+  color: var(--cyan);
+}
+
+.radar__blip--merc-red {
+  color: var(--red);
 }
 
 .radar__blip--starlink-target {

@@ -32,6 +32,14 @@ const ENERGY_BEARING_COST = 17;
 const ENERGY_CIWS_ROUND_COST = 0.04;
 const ENERGY_ANTI_AIR_COST = 24;
 const ENERGY_NUCLEAR_COST = 46;
+const MERCENARY_SPEED = 13.2;
+const MERCENARY_ATTACK_RANGE = 138;
+const MERCENARY_FIRE_COOLDOWN = 0.72;
+const MERCENARY_DAMAGE = 14;
+const MERCENARY_HIT_RADIUS = 2.2;
+const MERCENARY_HEALTH = 72;
+const MERCENARY_GRID_SIZE = 12;
+const MERCENARY_REPAIR_RADIUS = 18;
 const DYNAMITE_RADIUS = 10.5;
 const DYNAMITE_DAMAGE = 18;
 const DYNAMITE_KNOCKBACK = 50;
@@ -111,6 +119,7 @@ export class GameScene {
     const battlefield = makeBattlefield(this.mapConfig);
     this.navBlockers = battlefield.userData.navBlockers ?? [];
     this.attackBlockers = battlefield.userData.attackBlockers ?? [];
+    this.mercenaryNavGrid = this.buildMercenaryNavGrid();
     this.scene.add(battlefield);
     const blueStart = this.mapConfig.blue ?? { base: { x: -78, z: 28 }, vehicle: { x: -74, z: 24, heading: 0 } };
     const redStart = this.mapConfig.red ?? { base: { x: 78, z: -228 }, vehicle: { x: 74, z: -224, heading: Math.PI } };
@@ -173,6 +182,7 @@ export class GameScene {
     this.tracers = [];
     this.flashes = [];
     this.deployables = [];
+    this.mercenaries = [];
     this.placementCursors = this.createPlacementCursors();
     this.starlinkEffects = [];
     this.activeStarlinks = [];
@@ -210,6 +220,8 @@ export class GameScene {
     this.pushLog("武器槽：1 主武器 · 2 雷管 · 3 滚珠轴承 · 4 远程星链 · 5 远程防空");
     this.pushLog("X 触发核能，C 穿铅服 30s；未穿铅服会被核污染持续掉血");
     this.pushLog("布置阶段：在大地图左键部署蓝方测速器，右键部署红方测速器");
+    this.pushLog("雇佣军：Shift+大地图点击投放/移动，Ctrl+点击攻击，Alt+点击突入敌方基地修电脑");
+    this.pushLog("雇佣军受击后：Y 允许反击，U 允许自由攻击，N 原地待命");
     this.pushLog("本地双人 P2 使用 6-0 切换同款武器槽，Enter 执行当前武器");
     if (this.mode === "online") {
       this.pushLog("在线 PK 使用人机对战同款本机快捷键，远端玩家不占用本地 P2 键位");
@@ -237,22 +249,36 @@ export class GameScene {
   }
 
   onStrategicMapPointerDown(event) {
-    if (this.phase !== "setup" || this.paused || this.finished) return;
+    if (this.paused || this.finished) return;
     const point = this.strategicMapPointFromEvent(event);
     if (!point) return;
+    const ownerId = event.button === 2 ? 2 : 1;
+    const ownerVehicle = this.ownerVehicle(ownerId);
+    if (!ownerVehicle || !ownerVehicle.controller.startsWith("human")) return;
 
-    if (event.button === 0) {
-      const vehicle = this.vehicles.find((item) => item.id === 1 && item.controller.startsWith("human"));
-      if (vehicle) this.deploySpeedometerAt(vehicle, point);
+    if (this.phase === "setup") {
+      this.deploySpeedometerAt(ownerVehicle, point);
       event.preventDefault();
       return;
     }
 
-    if (event.button === 2) {
-      const vehicle = this.vehicles.find((item) => item.id === 2 && item.controller.startsWith("human"));
-      if (vehicle) this.deploySpeedometerAt(vehicle, point);
+    if (event.altKey) {
+      if (!this.mercenaryFor(ownerId)) this.deployMercenaryAt(ownerId, point);
+      this.commandMercenaryInfiltrate(ownerId);
       event.preventDefault();
+      return;
     }
+
+    if (event.ctrlKey || event.metaKey) {
+      if (!this.mercenaryFor(ownerId)) this.deployMercenaryAt(ownerId, point);
+      const target = this.targetAtStrategicPoint(ownerId, point);
+      if (target) this.commandMercenaryAttack(ownerId, target);
+      event.preventDefault();
+      return;
+    }
+
+    this.commandMercenaryMove(ownerId, point);
+    event.preventDefault();
   }
 
   strategicMapPointFromEvent(event) {
@@ -324,6 +350,14 @@ export class GameScene {
       vehicle.invincible = Math.max(0, vehicle.invincible - dt);
       vehicle.leadSuitTimer = Math.max(0, vehicle.leadSuitTimer - dt);
       this.updateVehicle(vehicle, dt);
+    }
+    for (const mercenary of this.mercenaries) {
+      if (!mercenary.alive) continue;
+      mercenary.cooldown = Math.max(0, mercenary.cooldown - dt);
+      mercenary.invincible = Math.max(0, mercenary.invincible - dt);
+      mercenary.alertTimer = Math.max(0, mercenary.alertTimer - dt);
+      this.updateMercenaryInput(mercenary);
+      this.updateMercenary(mercenary, dt);
     }
 
     this.updateNuclearEvent(dt);
@@ -440,6 +474,51 @@ export class GameScene {
     };
   }
 
+  createMercenary({ ownerId, x, z }) {
+    const vehicle = this.vehicles.find((item) => item.id === ownerId);
+    const color = vehicle?.color ?? (ownerId === 1 ? 0x2f5f78 : 0x743941);
+    const accent = vehicle?.accent ?? (ownerId === 1 ? 0x43e0ff : 0xff4f64);
+    const group = makeHumanCombatant({ color, accent });
+    group.scale.setScalar(0.9);
+    const nameplate = makeLabelSprite(ownerId === 1 ? "P1 MERC" : "P2 MERC", accent);
+    nameplate.position.y = 3.85;
+    nameplate.scale.set(3.6, 1.08, 1);
+    group.add(nameplate);
+    group.position.set(x, 0, z);
+    this.scene.add(group);
+    return {
+      kind: "mercenary",
+      id: `merc-${ownerId}`,
+      ownerId,
+      name: ownerId === 1 ? "蓝方雇佣军" : "红方雇佣军",
+      color,
+      accent,
+      x,
+      z,
+      heading: ownerId === 1 ? 0 : Math.PI,
+      health: MERCENARY_HEALTH,
+      alive: true,
+      cooldown: 0,
+      invincible: 0,
+      hits: 0,
+      group,
+      velocity: new THREE.Vector3(),
+      blastVelocity: new THREE.Vector3(),
+      slipVelocity: new THREE.Vector3(),
+      verticalVelocity: 0,
+      air: 0,
+      slipTimer: 0,
+      slipPhase: 0,
+      slipSpin: 0,
+      command: { type: "hold", point: null, targetId: null, path: [], pathIndex: 0 },
+      engagementMode: "hold",
+      lastAttackerId: null,
+      lastAlertBy: null,
+      alertTimer: 0,
+      alertText: "",
+    };
+  }
+
   createBase({ ownerId, name, color, accent, x, z }) {
     const group = makeBase({ name, color, accent, radius: BASE_RADIUS });
     group.position.set(x, 0, z);
@@ -463,6 +542,426 @@ export class GameScene {
       badComputerScreen: group.userData.badComputerScreen,
       badComputerSmoke: group.userData.badComputerSmoke,
     };
+  }
+
+  buildMercenaryNavGrid() {
+    const cols = Math.ceil((ARENA.x * 2) / MERCENARY_GRID_SIZE) + 1;
+    const rows = Math.ceil((ARENA.zMax - ARENA.zMin) / MERCENARY_GRID_SIZE) + 1;
+    const cells = [];
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const x = -ARENA.x + col * MERCENARY_GRID_SIZE;
+        const z = ARENA.zMin + row * MERCENARY_GRID_SIZE;
+        const blocked = this.attackBlockers.some((blocker) => distanceXZ({ x, z }, blocker) < blocker.radius + 2.4);
+        cells.push({ col, row, x, z, blocked });
+      }
+    }
+    return { cols, rows, cells };
+  }
+
+  mercenaryCellIndex(col, row) {
+    const grid = this.mercenaryNavGrid;
+    if (!grid) return -1;
+    if (col < 0 || row < 0 || col >= grid.cols || row >= grid.rows) return -1;
+    return row * grid.cols + col;
+  }
+
+  mercenaryCellForPoint(point) {
+    const grid = this.mercenaryNavGrid;
+    if (!grid) return null;
+    const col = THREE.MathUtils.clamp(Math.round((point.x + ARENA.x) / MERCENARY_GRID_SIZE), 0, grid.cols - 1);
+    const row = THREE.MathUtils.clamp(Math.round((point.z - ARENA.zMin) / MERCENARY_GRID_SIZE), 0, grid.rows - 1);
+    return grid.cells[this.mercenaryCellIndex(col, row)] ?? null;
+  }
+
+  nearestPassableMercenaryCell(point) {
+    const grid = this.mercenaryNavGrid;
+    if (!grid) return null;
+    const start = this.mercenaryCellForPoint(point);
+    if (!start) return null;
+    if (!start.blocked) return start;
+    let best = null;
+    for (const cell of grid.cells) {
+      if (cell.blocked) continue;
+      const distance = distanceXZ(point, cell);
+      if (!best || distance < best.distance) {
+        best = { cell, distance };
+      }
+    }
+    return best?.cell ?? null;
+  }
+
+  findMercenaryPath(startPoint, endPoint) {
+    const grid = this.mercenaryNavGrid;
+    if (!grid) return [];
+    const start = this.nearestPassableMercenaryCell(startPoint);
+    const goal = this.nearestPassableMercenaryCell(endPoint);
+    if (!start || !goal) return [];
+    if (start === goal) return [new THREE.Vector3(endPoint.x, 0, endPoint.z)];
+
+    const startIndex = this.mercenaryCellIndex(start.col, start.row);
+    const goalIndex = this.mercenaryCellIndex(goal.col, goal.row);
+    const queue = [startIndex];
+    const parents = new Map([[startIndex, -1]]);
+    const directions = [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
+    ];
+
+    while (queue.length) {
+      const currentIndex = queue.shift();
+      if (currentIndex === goalIndex) break;
+      const current = grid.cells[currentIndex];
+      for (const [dx, dz] of directions) {
+        const nextIndex = this.mercenaryCellIndex(current.col + dx, current.row + dz);
+        if (nextIndex < 0 || parents.has(nextIndex)) continue;
+        const next = grid.cells[nextIndex];
+        if (!next || next.blocked) continue;
+        parents.set(nextIndex, currentIndex);
+        queue.push(nextIndex);
+      }
+    }
+
+    if (!parents.has(goalIndex)) {
+      return [new THREE.Vector3(endPoint.x, 0, endPoint.z)];
+    }
+
+    const path = [];
+    let currentIndex = goalIndex;
+    while (currentIndex >= 0) {
+      const cell = grid.cells[currentIndex];
+      path.push(new THREE.Vector3(cell.x, 0, cell.z));
+      currentIndex = parents.get(currentIndex) ?? -1;
+    }
+    path.reverse();
+    path[path.length - 1] = new THREE.Vector3(endPoint.x, 0, endPoint.z);
+    return path;
+  }
+
+  mercenaryFor(ownerId) {
+    return this.mercenaries.find((mercenary) => mercenary.ownerId === ownerId);
+  }
+
+  ownerVehicle(ownerId) {
+    return this.vehicles.find((vehicle) => vehicle.id === ownerId);
+  }
+
+  enemyBaseFor(ownerId) {
+    return this.bases.find((base) => base.ownerId !== ownerId);
+  }
+
+  deployMercenaryAt(ownerId, point) {
+    const existing = this.mercenaryFor(ownerId);
+    if (existing?.alive) {
+      this.commandMercenaryMove(ownerId, point);
+      return existing;
+    }
+    if (existing && existing.group) {
+      this.scene.remove(existing.group);
+      this.mercenaries = this.mercenaries.filter((mercenary) => mercenary !== existing);
+    }
+    const mercenary = this.createMercenary({
+      ownerId,
+      x: THREE.MathUtils.clamp(point.x, -ARENA.x, ARENA.x),
+      z: THREE.MathUtils.clamp(point.z, ARENA.zMin, ARENA.zMax),
+    });
+    this.mercenaries.push(mercenary);
+    this.pushLog(`${mercenary.name} 已部署`);
+    return mercenary;
+  }
+
+  commandMercenaryMove(ownerId, point) {
+    const mercenary = this.mercenaryFor(ownerId) ?? this.deployMercenaryAt(ownerId, point);
+    if (!mercenary) return;
+    mercenary.command = {
+      type: "move",
+      point: new THREE.Vector3(point.x, 0, point.z),
+      targetId: null,
+      path: this.findMercenaryPath(mercenary, point),
+      pathIndex: 0,
+    };
+    this.pushLog(`${mercenary.name} 接到移动命令`);
+  }
+
+  commandMercenaryAttack(ownerId, target) {
+    const mercenary = this.mercenaryFor(ownerId);
+    if (!mercenary?.alive || !target?.alive) return;
+    mercenary.command = {
+      type: "attack",
+      point: null,
+      targetId: target.id,
+      path: [],
+      pathIndex: 0,
+    };
+    this.pushLog(`${mercenary.name} 锁定 ${target.name}`);
+  }
+
+  commandMercenaryInfiltrate(ownerId) {
+    const mercenary = this.mercenaryFor(ownerId);
+    const enemyBase = this.enemyBaseFor(ownerId);
+    if (!mercenary?.alive || !enemyBase) return;
+    mercenary.command = {
+      type: "infiltrate",
+      point: new THREE.Vector3(enemyBase.x, 0, enemyBase.z),
+      targetId: enemyBase.ownerId,
+      path: this.findMercenaryPath(mercenary, enemyBase),
+      pathIndex: 0,
+    };
+    this.pushLog(`${mercenary.name} 突入 ${enemyBase.name} 修电脑`);
+  }
+
+  nearestEnemyTarget(ownerId, point = null) {
+    const candidates = [...this.vehicles, ...this.mercenaries].filter(
+      (unit) => unit.alive && this.teamOf(unit) !== ownerId,
+    );
+    if (!candidates.length) return null;
+    let best = null;
+    for (const candidate of candidates) {
+      const distance = distanceXZ(point ?? this.ownerVehicle(ownerId) ?? candidate, candidate);
+      if (!best || distance < best.distance) {
+        best = { target: candidate, distance };
+      }
+    }
+    return best?.target ?? null;
+  }
+
+  targetAtStrategicPoint(ownerId, point) {
+    const candidates = [...this.vehicles, ...this.mercenaries].filter(
+      (unit) => unit.alive && this.teamOf(unit) !== ownerId,
+    );
+    let best = null;
+    for (const candidate of candidates) {
+      const distance = distanceXZ(point, candidate);
+      if (distance > 26) continue;
+      if (!best || distance < best.distance) {
+        best = { target: candidate, distance };
+      }
+    }
+    return best?.target ?? this.nearestEnemyTarget(ownerId, point);
+  }
+
+  combatUnits() {
+    return [...this.vehicles, ...this.mercenaries];
+  }
+
+  teamOf(unit) {
+    return unit?.ownerId ?? unit?.id ?? null;
+  }
+
+  scoringUnitFor(unitOrTeam) {
+    const ownerId = typeof unitOrTeam === "number" ? unitOrTeam : this.teamOf(unitOrTeam);
+    return this.ownerVehicle(ownerId) ?? null;
+  }
+
+  projectileOwnerTeam(projectile) {
+    if (typeof projectile?.userData?.ownerTeam === "number") return projectile.userData.ownerTeam;
+    if (typeof projectile?.userData?.owner === "number") return projectile.userData.owner;
+    const owner = this.unitById(projectile?.userData?.owner);
+    return this.teamOf(owner);
+  }
+
+  ownerUnitForProjectile(projectile) {
+    if (!projectile?.userData) return null;
+    if (projectile.userData.ownerKind === "mercenary") {
+      return this.unitById(projectile.userData.owner);
+    }
+    return this.unitById(projectile.userData.owner) ?? this.ownerVehicle(this.projectileOwnerTeam(projectile));
+  }
+
+  alertForMercenary(ownerId) {
+    return this.mercenaries.find((mercenary) => mercenary.ownerId === ownerId && mercenary.alertTimer > 0);
+  }
+
+  destroyCombatUnit(unit, scorer = null, reason = "KNOCKOUT") {
+    if (!unit?.alive) return;
+    unit.alive = false;
+    if (unit.kind === "mercenary") {
+      this.pushLog(`${unit.name} 被击倒`);
+      return;
+    }
+    if (scorer) {
+      this.finishRound(scorer, reason);
+    }
+  }
+
+  isHumanControlled(unit) {
+    return Boolean(unit?.controller?.startsWith?.("human"));
+  }
+
+  hitRadiusFor(unit) {
+    return unit?.kind === "mercenary" ? MERCENARY_HIT_RADIUS : 3.1;
+  }
+
+  applyCombatDamage(target, owner, damage, reason = "KNOCKOUT") {
+    if (!target?.alive || damage <= 0) return false;
+    target.health = Math.max(0, target.health - damage);
+    if (target.health > 0) return false;
+    this.destroyCombatUnit(target, owner, reason);
+    return true;
+  }
+
+  updateMercenaryInput(mercenary) {
+    const ownerId = mercenary.ownerId;
+    if (this.input.consumeMercRetaliateFor(ownerId)) {
+      mercenary.engagementMode = "retaliate";
+      this.pushLog(`${mercenary.name} 获准反击来袭目标`);
+      if (mercenary.lastAttackerId) {
+        const attacker = this.unitById(mercenary.lastAttackerId);
+        if (attacker?.alive) this.commandMercenaryAttack(ownerId, attacker);
+      }
+    }
+    if (this.input.consumeMercFreeFireFor(ownerId)) {
+      mercenary.engagementMode = "free-fire";
+      this.pushLog(`${mercenary.name} 获准攻击任意敌方`);
+      const target = this.nearestEnemyTarget(ownerId, mercenary);
+      if (target) this.commandMercenaryAttack(ownerId, target);
+    }
+    if (this.input.consumeMercHoldFor(ownerId)) {
+      mercenary.engagementMode = "hold";
+      mercenary.command = { type: "hold", point: null, targetId: null, path: [], pathIndex: 0 };
+      this.pushLog(`${mercenary.name} 转入原地待命`);
+    }
+  }
+
+  updateMercenary(mercenary, dt) {
+    if (!mercenary.alive) return;
+    mercenary.slipTimer = Math.max(0, mercenary.slipTimer - dt);
+    mercenary.slipPhase += dt * (mercenary.slipTimer > 0 ? 14 : 4);
+
+    if (mercenary.engagementMode === "free-fire" && mercenary.command.type === "hold") {
+      const target = this.nearestEnemyTarget(mercenary.ownerId, mercenary);
+      if (target) this.commandMercenaryAttack(mercenary.ownerId, target);
+    }
+
+    if (mercenary.command.type === "move" || mercenary.command.type === "infiltrate") {
+      this.updateMercenaryMovement(mercenary, dt);
+    } else if (mercenary.command.type === "attack") {
+      const target = this.unitById(mercenary.command.targetId);
+      if (!target?.alive) {
+        mercenary.command = { type: "hold", point: null, targetId: null, path: [], pathIndex: 0 };
+      } else {
+        this.updateMercenaryAttack(mercenary, target, dt);
+      }
+    }
+
+    if (mercenary.command.type === "infiltrate") {
+      const base = this.enemyBaseFor(mercenary.ownerId);
+      if (base && distanceXZ(mercenary, base) <= MERCENARY_REPAIR_RADIUS) {
+        base.computerRepair = Math.min(1, base.computerRepair + dt / BAD_COMPUTER_REPAIR_SECONDS);
+      }
+    }
+
+    this.applySlipMotion(mercenary, dt);
+    this.applyBlastMotion(mercenary, dt);
+    this.resolveVehicleCoverCollision(mercenary);
+    mercenary.group.position.set(mercenary.x, mercenary.air, mercenary.z);
+    mercenary.group.rotation.y = mercenary.heading;
+    mercenary.group.rotation.x = THREE.MathUtils.clamp(
+      -mercenary.blastVelocity.z * 0.006 + this.slipWobbleFor(mercenary, 0.08),
+      -0.24,
+      0.24,
+    );
+    mercenary.group.rotation.z = THREE.MathUtils.clamp(
+      mercenary.blastVelocity.x * 0.005 + this.slipWobbleFor(mercenary, 0.12),
+      -0.24,
+      0.24,
+    );
+  }
+
+  updateMercenaryMovement(mercenary, dt) {
+    const path = mercenary.command.path ?? [];
+    const destination = path[mercenary.command.pathIndex] ?? mercenary.command.point;
+    if (!destination) {
+      mercenary.command = { type: "hold", point: null, targetId: null, path: [], pathIndex: 0 };
+      mercenary.velocity.set(0, 0, 0);
+      return;
+    }
+
+    const toPoint = new THREE.Vector3(destination.x - mercenary.x, 0, destination.z - mercenary.z);
+    const distance = toPoint.length();
+    if (distance <= 4) {
+      if (mercenary.command.pathIndex < path.length - 1) {
+        mercenary.command.pathIndex += 1;
+        return;
+      }
+      mercenary.command = mercenary.command.type === "infiltrate"
+        ? { ...mercenary.command, point: destination, path: [], pathIndex: 0 }
+        : { type: "hold", point: null, targetId: null, path: [], pathIndex: 0 };
+      mercenary.velocity.set(0, 0, 0);
+      return;
+    }
+
+    toPoint.normalize();
+    const dx = toPoint.x * MERCENARY_SPEED * dt;
+    const dz = toPoint.z * MERCENARY_SPEED * dt;
+    mercenary.x = THREE.MathUtils.clamp(mercenary.x + dx, -ARENA.x, ARENA.x);
+    mercenary.z = THREE.MathUtils.clamp(mercenary.z + dz, ARENA.zMin, ARENA.zMax);
+    mercenary.velocity.set(dx / Math.max(dt, 0.001), 0, dz / Math.max(dt, 0.001));
+    mercenary.heading = lerpAngle(mercenary.heading, angleToTarget(mercenary, destination), Math.min(1, dt * 6));
+  }
+
+  updateMercenaryAttack(mercenary, target, dt) {
+    const distance = distanceXZ(mercenary, target);
+    if (distance > MERCENARY_ATTACK_RANGE * 0.78) {
+      mercenary.command.path = this.findMercenaryPath(mercenary, target);
+      mercenary.command.pathIndex = 0;
+      this.updateMercenaryMovement(mercenary, dt);
+      return;
+    }
+
+    mercenary.velocity.set(0, 0, 0);
+    mercenary.heading = lerpAngle(mercenary.heading, angleToTarget(mercenary, target), Math.min(1, dt * 7));
+    if (mercenary.cooldown > 0 || !this.hasLineOfSight(mercenary, target)) return;
+
+    const start = new THREE.Vector3(mercenary.x, 1.95 + mercenary.air, mercenary.z);
+    const aim = new THREE.Vector3(target.x, 1.9 + target.air, target.z).sub(start).normalize();
+    const projectile = new THREE.Mesh(
+      new THREE.SphereGeometry(0.14, 10, 10),
+      new THREE.MeshBasicMaterial({ color: mercenary.accent }),
+    );
+    projectile.position.copy(start);
+    projectile.userData = {
+      owner: mercenary.id,
+      ownerKind: "mercenary",
+      ownerTeam: mercenary.ownerId,
+      velocity: aim.multiplyScalar(74),
+      life: 2.8,
+      damage: MERCENARY_DAMAGE,
+      mercenary: true,
+    };
+    this.scene.add(projectile);
+    this.projectiles.push(projectile);
+    this.addTracer(start, start.clone().addScaledVector(projectile.userData.velocity.clone().normalize(), 6), mercenary.accent);
+    this.addFlash(start, projectile.userData.velocity.clone().normalize());
+    mercenary.cooldown = MERCENARY_FIRE_COOLDOWN;
+  }
+
+  registerMercenaryHit(mercenary, attacker) {
+    if (!mercenary?.alive) return;
+    mercenary.lastAttackerId = attacker?.id ?? null;
+    mercenary.alertTimer = 6;
+    mercenary.alertText = attacker ? `${mercenary.name} 受击，攻击者：${attacker.name}` : `${mercenary.name} 受击`;
+    if (mercenary.lastAlertBy !== attacker?.id) {
+      this.pushLog(mercenary.alertText);
+      mercenary.lastAlertBy = attacker?.id ?? "unknown";
+    }
+    if (mercenary.engagementMode === "retaliate" && attacker?.alive) {
+      this.commandMercenaryAttack(mercenary.ownerId, attacker);
+    }
+    if (mercenary.engagementMode === "free-fire") {
+      const target = attacker?.alive ? attacker : this.nearestEnemyTarget(mercenary.ownerId, mercenary);
+      if (target) this.commandMercenaryAttack(mercenary.ownerId, target);
+    }
+  }
+
+  unitById(id) {
+    return [...this.vehicles, ...this.mercenaries].find((unit) => unit.id === id);
   }
 
   createPlacementCursors() {
@@ -1263,9 +1762,14 @@ export class GameScene {
       if (!owner || !enemy || this.finished) continue;
 
       const defenderInside = owner.alive && this.isInsideBase(owner, base);
-      const enemyInside = enemy.alive && this.isInsideBase(enemy, base);
+      const defenderMercInside = this.mercenaries.some(
+        (mercenary) => mercenary.alive && mercenary.ownerId === base.ownerId && this.isInsideBase(mercenary, base),
+      );
+      const enemyInside = this.combatUnits().some(
+        (unit) => unit.alive && this.teamOf(unit) !== base.ownerId && this.isInsideBase(unit, base),
+      );
       if (enemyInside) {
-        const pressure = defenderInside ? 0.42 : 1;
+        const pressure = defenderInside || defenderMercInside ? 0.42 : 1;
         base.computerRepair = Math.min(1, base.computerRepair + (dt * pressure) / BAD_COMPUTER_REPAIR_SECONDS);
       } else {
         base.computerRepair = Math.max(0, base.computerRepair - dt / (BAD_COMPUTER_REPAIR_SECONDS * 1.4));
@@ -1290,8 +1794,12 @@ export class GameScene {
       }
 
       if (base.computerRepair >= 1) {
-        this.pushLog(`${enemy.name} 修好了 ${base.name} 的坏电脑`);
-        this.finishRound(enemy, "COMPUTER_REPAIRED");
+        const repairer = this.combatUnits().find(
+          (unit) => unit.alive && this.teamOf(unit) !== base.ownerId && this.isInsideBase(unit, base),
+        ) ?? enemy;
+        const scorer = this.scoringUnitFor(repairer);
+        this.pushLog(`${repairer?.name ?? enemy.name} 修好了 ${base.name} 的坏电脑`);
+        if (scorer) this.finishRound(scorer, "COMPUTER_REPAIRED");
         return;
       }
 
@@ -1419,43 +1927,53 @@ export class GameScene {
   resolveHits() {
     for (const projectile of this.projectiles) {
       if (projectile.userData.life <= 0) continue;
-      const target = this.vehicles.find((vehicle) => vehicle.id !== projectile.userData.owner && vehicle.alive);
-      const targetCenter = target?.group.position.clone().add(new THREE.Vector3(0, 1.55, 0));
-      if (!target || projectile.position.distanceTo(targetCenter) > 3.1) continue;
+      const ownerTeam = this.projectileOwnerTeam(projectile);
+      const target = this.combatUnits().find((unit) => {
+        if (!unit.alive) return false;
+        if (this.teamOf(unit) === ownerTeam) return false;
+        if (unit.invincible > 0) return false;
+        const targetCenter = unit.group.position.clone().add(new THREE.Vector3(0, unit.kind === "mercenary" ? 1.3 : 1.55, 0));
+        return projectile.position.distanceTo(targetCenter) <= this.hitRadiusFor(unit);
+      });
+      if (!target) continue;
       if (projectile.userData.dynamite) {
         this.detonateDynamite(projectile);
         continue;
       }
-      const owner = this.vehicles.find((vehicle) => vehicle.id === projectile.userData.owner);
+      const owner = this.scoringUnitFor(this.ownerUnitForProjectile(projectile) ?? ownerTeam);
       if (projectile.userData.bearing) {
         this.applyBearingHit(projectile, target, owner);
         continue;
       }
       projectile.userData.life = 0;
-      target.health = Math.max(0, target.health - projectile.userData.damage);
+      const eliminated = this.applyCombatDamage(target, owner, projectile.userData.damage);
       target.invincible = 0.35;
-      owner.hits += 1;
-      owner.score += projectile.userData.damage * (projectile.userData.ciws ? 5 : 12);
+      if (owner) {
+        owner.hits += 1;
+        owner.score += projectile.userData.damage * (projectile.userData.ciws ? 5 : 12);
+      }
+      if (target.kind === "mercenary") {
+        this.registerMercenaryHit(target, this.ownerUnitForProjectile(projectile));
+      }
       this.hitTimer = projectile.userData.ciws ? Math.max(this.hitTimer, 0.08) : 0.42;
       this.damageFlash = Math.max(
         this.damageFlash,
-        target.controller.startsWith("human") ? (projectile.userData.ciws ? 0.18 : 0.75) : 0.28,
+        this.isHumanControlled(target) ? (projectile.userData.ciws ? 0.18 : 0.75) : 0.28,
       );
       this.shake = Math.max(this.shake, projectile.userData.ciws ? 0.16 : 1.1);
       this.addExplosion(
         target.group.position.clone().add(new THREE.Vector3(0, 2, 0)),
-        owner.accent,
+        owner?.accent ?? 0xc6ccd0,
         projectile.userData.ciws ? 4 : 18,
       );
-      if (!projectile.userData.ciws || owner.hits % 24 === 0) {
+      if (owner && (!projectile.userData.ciws || owner.hits % 24 === 0)) {
         this.pushLog(projectile.userData.ciws ? `${owner.name} 近防炮压制 ${target.name}` : `${owner.name} 命中 ${target.name}`);
       }
       if (!projectile.userData.ciws) {
         this.audio.beep({ frequency: 220, duration: 0.08, type: "square", gain: 0.04 });
       }
-      if (target.health <= 0) {
-        target.alive = false;
-        this.finishRound(owner, "KNOCKOUT");
+      if (eliminated && target.kind === "mercenary") {
+        target.alertTimer = 0;
       }
     }
   }
@@ -1517,18 +2035,24 @@ export class GameScene {
     if (!this.nuclearEvent?.active) return;
     this.nuclearEvent.timer = Math.max(0, this.nuclearEvent.timer - dt);
 
-    for (const vehicle of this.vehicles) {
-      if (!vehicle.alive || vehicle.leadSuitTimer > 0) continue;
-      vehicle.health = Math.max(0, vehicle.health - NUCLEAR_DAMAGE_PER_SECOND * dt);
-      if (vehicle.controller.startsWith("human")) {
+    for (const unit of [...this.vehicles, ...this.mercenaries]) {
+      if (!unit.alive || unit.leadSuitTimer > 0) continue;
+      const eliminated = this.applyCombatDamage(unit, null, NUCLEAR_DAMAGE_PER_SECOND * dt, "NUCLEAR_EXPOSURE");
+      if (this.isHumanControlled(unit)) {
         this.damageFlash = Math.max(this.damageFlash, 0.2);
       }
-      if (vehicle.health > 0) continue;
+      if (!eliminated) continue;
 
-      vehicle.alive = false;
-      this.pushLog(`${vehicle.name} 未穿铅服，被核污染拖垮`);
+      this.pushLog(`${unit.name} 未穿铅服，被核污染拖垮`);
       const owner = this.vehicles.find((item) => item.id === this.nuclearEvent.ownerId);
-      if (owner && owner.id !== vehicle.id) {
+      if (unit.kind === "mercenary") {
+        if (owner && owner.id !== this.teamOf(unit)) {
+          owner.score += 2600;
+          owner.hits += 1;
+        }
+        continue;
+      }
+      if (owner && owner.id !== this.teamOf(unit)) {
         owner.score += 2600;
         owner.hits += 1;
         this.finishRound(owner, "NUCLEAR_EXPOSURE");
@@ -1555,7 +2079,8 @@ export class GameScene {
 
   applyBearingHit(projectile, target, owner) {
     projectile.userData.life = 0;
-    target.health = Math.max(0, target.health - projectile.userData.damage);
+    const attacker = this.ownerUnitForProjectile(projectile);
+    const eliminated = this.applyCombatDamage(target, owner, projectile.userData.damage);
     target.invincible = 0.3;
     target.slipTimer = Math.max(target.slipTimer, BEARING_SLIP_SECONDS);
     target.slipSpin = (Math.random() < 0.5 ? -1 : 1) * (1.8 + Math.random() * 1.4);
@@ -1574,15 +2099,17 @@ export class GameScene {
       owner.score += projectile.userData.damage * 18 + 420;
       this.pushLog(`${owner.name} 发射滚珠轴承，${target.name} 滑倒`);
     }
+    if (target.kind === "mercenary") {
+      this.registerMercenaryHit(target, attacker);
+    }
     this.hitTimer = 0.34;
-    this.damageFlash = Math.max(this.damageFlash, target.controller.startsWith("human") ? 0.7 : 0.28);
+    this.damageFlash = Math.max(this.damageFlash, this.isHumanControlled(target) ? 0.7 : 0.28);
     this.shake = Math.max(this.shake, 0.75);
     this.addBearingScatter(projectile.position.clone(), owner?.accent ?? 0xc6ccd0);
     this.audio.beep({ frequency: 390, duration: 0.09, type: "triangle", gain: 0.036 });
 
-    if (target.health <= 0 && owner) {
-      target.alive = false;
-      this.finishRound(owner, "KNOCKOUT");
+    if (eliminated && target.kind === "mercenary") {
+      target.alertTimer = 0;
     }
   }
 
@@ -1966,7 +2493,9 @@ export class GameScene {
     if (projectile.userData.detonated) return;
     projectile.userData.detonated = true;
     projectile.userData.life = 0;
-    const owner = this.vehicles.find((vehicle) => vehicle.id === projectile.userData.owner);
+    const ownerTeam = this.projectileOwnerTeam(projectile);
+    const ownerUnit = this.ownerUnitForProjectile(projectile);
+    const owner = this.scoringUnitFor(ownerUnit ?? ownerTeam);
     const color = owner?.accent ?? 0xffd166;
     this.addExplosion(projectile.position.clone(), color, 42);
     this.shake = Math.max(this.shake, 1.8);
@@ -1974,20 +2503,20 @@ export class GameScene {
     this.audio.beep({ frequency: 155, duration: 0.12, type: "square", gain: 0.058 });
 
     if (!owner) return;
-    for (const target of this.vehicles) {
-      if (target.id === owner.id || !target.alive) continue;
+    for (const target of this.combatUnits()) {
+      if (!target.alive || this.teamOf(target) === ownerTeam) continue;
       const distance = distanceXZ(projectile.position, target);
       if (distance > DYNAMITE_RADIUS) continue;
       const falloff = 1 - distance / DYNAMITE_RADIUS;
       const coverMultiplier = this.blastCoverMultiplier(projectile.position, target);
       const damage = DYNAMITE_DAMAGE * (0.35 + falloff * 0.65) * coverMultiplier;
-      target.health = Math.max(0, target.health - damage);
+      const eliminated = this.applyCombatDamage(target, owner, damage);
       target.invincible = 0.45;
       owner.hits += 1;
       owner.score += damage * 14;
       this.damageFlash = Math.max(
         this.damageFlash,
-        target.controller.startsWith("human") ? 0.85 : 0.34,
+        this.isHumanControlled(target) ? 0.85 : 0.34,
       );
 
       const blastDirection = new THREE.Vector3(target.x - projectile.position.x, 0, target.z - projectile.position.z);
@@ -2005,10 +2534,11 @@ export class GameScene {
       } else {
         this.pushLog(`${owner.name} 雷管炸飞 ${target.name}`);
       }
-
-      if (target.health <= 0) {
-        target.alive = false;
-        this.finishRound(owner, "KNOCKOUT");
+      if (target.kind === "mercenary") {
+        this.registerMercenaryHit(target, ownerUnit ?? owner);
+      }
+      if (eliminated && target.kind === "mercenary") {
+        target.alertTimer = 0;
       }
     }
   }
@@ -2197,6 +2727,11 @@ export class GameScene {
   systemStateText(primaryVehicle) {
     if (this.paused) return "暂停";
     if (this.phase === "setup") return "场地布置 · 超声波测速器待命";
+    const mercAlert = this.alertForMercenary(primaryVehicle?.id);
+    if (mercAlert) {
+      const commandTip = primaryVehicle?.id === 1 ? "Y反击/U自由攻击/N待命" : "H反击/J自由攻击/M待命";
+      return `${mercAlert.alertText} · ${commandTip}`;
+    }
     if (this.nuclearEvent?.active) {
       return `核污染 ${Math.ceil(this.nuclearEvent.timer)}s · ${primaryVehicle.leadSuitTimer > 0 ? `铅服${Math.ceil(primaryVehicle.leadSuitTimer)}s` : "未穿铅服"}`;
     }
@@ -2303,10 +2838,16 @@ export class GameScene {
         kind: starlinkReady && vehicle === starlinkTarget ? "starlink-target" : vehicle.id === 1 ? "blue" : "red",
         occluded: Boolean(navBase && !this.hasLineOfSight(navBase, vehicle)),
       })),
+      ...this.mercenaries.filter((mercenary) => mercenary.alive).map((mercenary) => ({
+        x: mercenary.x,
+        z: mercenary.z,
+        kind: mercenary.ownerId === 1 ? "merc-blue" : "merc-red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, mercenary)),
+      })),
       ...this.projectiles.map((projectile) => ({
         x: projectile.position.x,
         z: projectile.position.z,
-        kind: projectile.userData.owner === 1 ? "shot-blue" : "shot-red",
+        kind: this.projectileOwnerTeam(projectile) === 1 ? "shot-blue" : "shot-red",
         occluded: Boolean(navBase && !this.hasLineOfSight(navBase, projectile.position)),
       })),
       ...this.activeStarlinks.map((strike) => ({
@@ -2367,6 +2908,12 @@ export class GameScene {
         kind: starlinkReady && vehicle === starlinkTarget ? "starlink-target" : vehicle.id === 1 ? "blue" : "red",
         occluded: Boolean(navBase && !this.hasLineOfSight(navBase, vehicle)),
       })),
+      ...this.mercenaries.filter((mercenary) => mercenary.alive).map((mercenary) => ({
+        x: mercenary.x,
+        z: mercenary.z,
+        kind: mercenary.ownerId === 1 ? "merc-blue" : "merc-red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, mercenary)),
+      })),
       ...this.deployables.map((item) => ({
         x: item.x,
         z: item.z,
@@ -2376,7 +2923,7 @@ export class GameScene {
       ...this.projectiles.map((projectile) => ({
         x: projectile.position.x,
         z: projectile.position.z,
-        kind: projectile.userData.owner === 1 ? "shot-blue" : "shot-red",
+        kind: this.projectileOwnerTeam(projectile) === 1 ? "shot-blue" : "shot-red",
         occluded: Boolean(navBase && !this.hasLineOfSight(navBase, projectile.position)),
       })),
       ...this.activeStarlinks.map((strike) => ({
@@ -2483,7 +3030,7 @@ export class GameScene {
     return this.strategicMapTrackFor(
       start,
       end,
-      projectile.userData.owner === 1 ? "blue" : "red",
+      this.projectileOwnerTeam(projectile) === 1 ? "blue" : "red",
       Boolean(navBase && !this.hasLineOfSight(navBase, projectile.position)),
     );
   }

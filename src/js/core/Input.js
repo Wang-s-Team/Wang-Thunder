@@ -16,6 +16,9 @@ export class Input {
     this.antiAirPulse = { 1: false, 2: false };
     this.nuclearPulse = { 1: false, 2: false };
     this.leadSuitPulse = { 1: false, 2: false };
+    this.mercRetaliatePulse = { 1: false, 2: false };
+    this.mercFreeFirePulse = { 1: false, 2: false };
+    this.mercHoldPulse = { 1: false, 2: false };
     this.bearingPulse = { 1: false, 2: false };
     this.deployPulse = { 1: false, 2: false };
     this.fireKeyPulse = { 1: false, 2: false };
@@ -63,6 +66,24 @@ export class Input {
       }
       if (key === "[") {
         this.leadSuitPulse[2] = true;
+      }
+      if (key === "y") {
+        this.mercRetaliatePulse[1] = true;
+      }
+      if (key === "u") {
+        this.mercFreeFirePulse[1] = true;
+      }
+      if (key === "n") {
+        this.mercHoldPulse[1] = true;
+      }
+      if (key === "h") {
+        this.mercRetaliatePulse[2] = true;
+      }
+      if (key === "j") {
+        this.mercFreeFirePulse[2] = true;
+      }
+      if (key === "m") {
+        this.mercHoldPulse[2] = true;
       }
       if (key === "r") {
         this.bearingPulse[1] = true;
@@ -249,6 +270,24 @@ export class Input {
   consumeLeadSuitFor(player) {
     const value = this.leadSuitPulse[player];
     this.leadSuitPulse[player] = false;
+    return value;
+  }
+
+  consumeMercRetaliateFor(player) {
+    const value = this.mercRetaliatePulse[player];
+    this.mercRetaliatePulse[player] = false;
+    return value;
+  }
+
+  consumeMercFreeFireFor(player) {
+    const value = this.mercFreeFirePulse[player];
+    this.mercFreeFirePulse[player] = false;
+    return value;
+  }
+
+  consumeMercHoldFor(player) {
+    const value = this.mercHoldPulse[player];
+    this.mercHoldPulse[player] = false;
     return value;
   }
 
