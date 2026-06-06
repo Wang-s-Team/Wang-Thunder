@@ -2256,64 +2256,92 @@ export class GameScene {
 
     const starlinkReady = this.starlinkReadyFor(operator);
     const starlinkTarget = this.enemyOf(operator);
-    const starlinkTracks = this.activeStarlinks.map((strike) => this.radarTrackFor(strike));
+    const navBase = this.navigationActive ? this.baseOf(this.navigator) : null;
+    const starlinkTracks = this.activeStarlinks.map((strike) => this.radarTrackFor(strike, navBase));
+    const shadows = this.attackBlockers.map((blocker) => this.radarShadowFor(blocker));
     const dots = [
-      ...this.bases.map((base) => ({ x: base.x, z: base.z, kind: base.ownerId === 1 ? "base-blue" : "base-red" })),
+      ...this.bases.map((base) => ({
+        x: base.x,
+        z: base.z,
+        kind: base.ownerId === 1 ? "base-blue" : "base-red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, base)),
+      })),
       ...this.deployables.map((item) => ({
         x: item.x,
         z: item.z,
         kind: item.ownerId === 1 ? "speedometer-blue" : "speedometer-red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, item)),
       })),
       ...this.vehicles.map((vehicle) => ({
         x: vehicle.x,
         z: vehicle.z,
         kind: starlinkReady && vehicle === starlinkTarget ? "starlink-target" : vehicle.id === 1 ? "blue" : "red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, vehicle)),
       })),
       ...this.projectiles.map((projectile) => ({
         x: projectile.position.x,
         z: projectile.position.z,
         kind: projectile.userData.owner === 1 ? "shot-blue" : "shot-red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, projectile.position)),
       })),
       ...this.activeStarlinks.map((strike) => ({
         x: strike.position.x,
         z: strike.position.z,
         kind: strike.targetId === operator.id ? "starlink-incoming" : "starlink-outgoing",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, strike.position)),
       })),
       ...this.antiAirMissiles.map((missile) => ({
         x: missile.group.position.x,
         z: missile.group.position.z,
         kind: missile.ownerId === operator.id ? "interceptor" : "shot-red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, missile.group.position)),
       })),
     ];
-    const centerZ = ARENA_CENTER_Z;
-    const halfZ = (ARENA.zMax - ARENA.zMin) / 2;
     this.elements.radarBlips.innerHTML = [
+      ...shadows.map((shadow) => shadow ?? ""),
       ...starlinkTracks.map((track) => {
         if (!track) return "";
-        return `<span class="radar__track radar__track--${track.hostile ? "hostile" : "friendly"}" style="left:${track.left}%;top:${track.top}%;width:${track.width}%;transform:rotate(${track.angle}deg)"></span>`;
+        const trackClasses = ["radar__track", `radar__track--${track.hostile ? "hostile" : "friendly"}`];
+        if (track.blocked) trackClasses.push("radar__track--blocked");
+        return `<span class="${trackClasses.join(" ")}" style="left:${track.left}%;top:${track.top}%;width:${track.width}%;transform:rotate(${track.angle}deg)"></span>`;
       }),
       ...dots.map((dot) => {
-        const left = THREE.MathUtils.clamp(50 + (dot.x / ARENA.x) * 42, 8, 92);
-        const top = THREE.MathUtils.clamp(50 + ((dot.z - centerZ) / halfZ) * 42, 8, 92);
-        return `<span class="radar__blip radar__blip--${dot.kind}" style="left:${left}%;top:${top}%"></span>`;
+        const position = this.radarPositionFor(dot);
+        const dotClasses = ["radar__blip", `radar__blip--${dot.kind}`];
+        if (dot.occluded) dotClasses.push("radar__blip--occluded");
+        return `<span class="${dotClasses.join(" ")}" style="left:${position.left}%;top:${position.top}%"></span>`;
       }),
     ].join("");
   }
 
-  radarTrackFor(strike) {
-    const centerZ = ARENA_CENTER_Z;
-    const halfZ = (ARENA.zMax - ARENA.zMin) / 2;
-    const startLeft = THREE.MathUtils.clamp(50 + (strike.start.x / ARENA.x) * 42, 8, 92);
-    const startTop = THREE.MathUtils.clamp(50 + ((strike.start.z - centerZ) / halfZ) * 42, 8, 92);
-    const endLeft = THREE.MathUtils.clamp(50 + (strike.target.x / ARENA.x) * 42, 8, 92);
-    const endTop = THREE.MathUtils.clamp(50 + ((strike.target.z - centerZ) / halfZ) * 42, 8, 92);
+  radarTrackFor(strike, navBase = null) {
+    const start = this.radarPositionFor(strike.start);
+    const end = this.radarPositionFor(strike.target);
     return {
       hostile: strike.targetId === this.activeRadarOperator()?.id,
-      left: startLeft,
-      top: startTop,
-      width: Math.hypot(endLeft - startLeft, endTop - startTop),
-      angle: (Math.atan2(endTop - startTop, endLeft - startLeft) * 180) / Math.PI,
+      blocked: Boolean(navBase && !this.hasLineOfSight(navBase, strike.position)),
+      left: start.left,
+      top: start.top,
+      width: Math.hypot(end.left - start.left, end.top - start.top),
+      angle: (Math.atan2(end.top - start.top, end.left - start.left) * 180) / Math.PI,
     };
+  }
+
+  radarPositionFor(point) {
+    const centerZ = ARENA_CENTER_Z;
+    const halfZ = (ARENA.zMax - ARENA.zMin) / 2;
+    return {
+      left: THREE.MathUtils.clamp(50 + (point.x / ARENA.x) * 42, 8, 92),
+      top: THREE.MathUtils.clamp(50 + ((point.z - centerZ) / halfZ) * 42, 8, 92),
+    };
+  }
+
+  radarShadowFor(blocker) {
+    if (!blocker) return "";
+    const position = this.radarPositionFor(blocker);
+    const width = THREE.MathUtils.clamp((blocker.radius / ARENA.x) * 84, 2.2, 24);
+    const height = THREE.MathUtils.clamp((blocker.radius / ((ARENA.zMax - ARENA.zMin) / 2)) * 84, 2.2, 24);
+    return `<span class="radar__shadow" style="left:${position.left}%;top:${position.top}%;width:${width}%;height:${height}%"></span>`;
   }
 
   starlinkReadyFor(vehicle) {
