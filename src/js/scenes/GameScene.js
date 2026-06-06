@@ -62,6 +62,15 @@ const WEAPON_SLOTS = {
   antiAir: { slot: 5, name: "防空", hint: "远程拦截" },
 };
 const WEAPON_BY_SLOT = Object.fromEntries(Object.entries(WEAPON_SLOTS).map(([id, weapon]) => [weapon.slot, id]));
+const AI_TACTICS = {
+  flank: "flank",
+  kite: "kite",
+  press: "press",
+  breakContact: "breakContact",
+  resupply: "resupply",
+  capture: "capture",
+  evade: "evade",
+};
 
 export class GameScene {
   constructor({ canvas, input, elements, audio }) {
@@ -369,6 +378,13 @@ export class GameScene {
       ai: {
         strafe: id === 1 ? 1 : -1,
         fireBias: 0.5 + Math.random() * 0.4,
+        tactic: AI_TACTICS.flank,
+        nextThink: 0.04 + Math.random() * 0.18,
+        aggression: 0.86 + Math.random() * 0.14,
+        preferredRange: 64 + Math.random() * 34,
+        flankSide: id === 1 ? 1 : -1,
+        weapon: "cannon",
+        lastWeaponSwap: 0,
       },
     };
   }
@@ -576,6 +592,8 @@ export class GameScene {
     vehicle.slipPhase += dt * (vehicle.slipTimer > 0 ? 14 : 4);
     if (vehicle.controller.startsWith("human")) {
       this.updateWeaponSelection(vehicle);
+    } else if (vehicle.controller === "ai") {
+      this.updateAiTactics(vehicle, enemy, dt);
     }
     this.updateKettleEnergy(vehicle, dt);
     if (this.controlledAntiAirFor(vehicle) || this.controlledStarlinkFor(vehicle)) {
@@ -624,12 +642,8 @@ export class GameScene {
       0.28,
     );
 
-    if (vehicle.controller === "ai" && this.aiWantsDynamite(vehicle, enemy)) {
-      this.fireDynamite(vehicle, predictedAimPoint(enemy, 0.42));
-    } else if (vehicle.controller === "ai" && this.aiWantsBearing(vehicle, enemy)) {
-      this.fireBearing(vehicle, predictedAimPoint(enemy, 0.2));
-    } else if (vehicle.controller === "ai" && this.aiWantsFire(vehicle, enemy)) {
-      this.fire(vehicle, enemy, aimPoint);
+    if (vehicle.controller === "ai") {
+      this.handleAiWeaponFire(vehicle, enemy, aimPoint);
     } else if (vehicle.controller.startsWith("human")) {
       this.handleSelectedWeaponFire(vehicle, enemy, aimPoint, false);
     }
@@ -823,26 +837,169 @@ export class GameScene {
 
   aiAxis(vehicle, enemy) {
     const ownBase = this.baseOf(vehicle);
-    if (ownBase && vehicle.energy < 28 && !this.isInsideBase(vehicle, ownBase)) {
-      const bx = ownBase.x - vehicle.x;
-      const bz = ownBase.z - vehicle.z;
-      const distance = Math.hypot(bx, bz) || 1;
-      return { x: bx / distance, y: bz / distance };
-    }
-    if (ownBase && vehicle.energy < 96 && this.isInsideBase(vehicle, ownBase)) {
+    const enemyBase = this.baseOf(enemy);
+    const tactic = vehicle.ai.tactic;
+    if (ownBase && tactic === AI_TACTICS.resupply && this.isInsideBase(vehicle, ownBase) && vehicle.energy < 82) {
       return { x: 0, y: 0 };
     }
+
+    if (ownBase && tactic === AI_TACTICS.resupply) return this.aiAxisToward(vehicle, ownBase);
+    if (enemyBase && tactic === AI_TACTICS.capture) return this.aiAxisToward(vehicle, enemyBase);
+    if (ownBase && tactic === AI_TACTICS.evade) {
+      const threat = this.incomingStarlinkFor(vehicle);
+      if (threat) {
+        const away = new THREE.Vector2(vehicle.x - threat.position.x, vehicle.z - threat.position.z);
+        if (away.lengthSq() > 0.01) {
+          away.normalize();
+          const toBase = new THREE.Vector2(ownBase.x - vehicle.x, ownBase.z - vehicle.z).normalize();
+          away.addScaledVector(toBase, 0.55).normalize();
+          return { x: away.x, y: away.y };
+        }
+      }
+      return this.aiAxisToward(vehicle, ownBase);
+    }
+
+    if (ownBase && this.isInsideBase(vehicle, ownBase) && vehicle.energy >= 82) {
+      return this.aiAxisLeaveBase(vehicle, enemy, ownBase);
+    }
+
     const dx = enemy.x - vehicle.x;
     const dz = enemy.z - vehicle.z;
     const distance = Math.hypot(dx, dz) || 1;
     const toward = new THREE.Vector2(dx / distance, dz / distance);
-    const side = new THREE.Vector2(-toward.y, toward.x).multiplyScalar(vehicle.ai.strafe);
-    const rangeControl = distance > 150 ? 1.3 : distance > 84 ? 0.98 : distance < 32 ? -0.85 : 0.18;
-    const weave = Math.sin(this.clock * (0.8 + vehicle.id * 0.25)) * 0.65;
+    const side = new THREE.Vector2(-toward.y, toward.x).multiplyScalar(vehicle.ai.flankSide);
+    const preferred = vehicle.ai.preferredRange;
+    let rangeControl = (distance - preferred) / Math.max(42, preferred);
+    rangeControl = THREE.MathUtils.clamp(rangeControl, -1, 1.25);
+    if (tactic === AI_TACTICS.press) rangeControl = Math.max(rangeControl, 0.72);
+    if (tactic === AI_TACTICS.kite || tactic === AI_TACTICS.breakContact) rangeControl = Math.min(rangeControl, -0.86);
+    if (tactic === AI_TACTICS.flank) rangeControl *= 0.5;
+    if (ownBase && this.isInsideBase(vehicle, ownBase) && vehicle.energy >= 82) {
+      rangeControl = Math.max(rangeControl, 0.86);
+    }
+    const weave = Math.sin(this.clock * (1.1 + vehicle.id * 0.31)) * 0.42;
+    const flankWeight = tactic === AI_TACTICS.flank ? 1.15 : tactic === AI_TACTICS.kite ? 0.62 : 0.82;
     return {
-      x: toward.x * rangeControl + side.x * (0.9 + weave * 0.3),
-      y: toward.y * rangeControl + side.y * (0.9 + weave * 0.3),
+      x: toward.x * rangeControl + side.x * (flankWeight + weave),
+      y: toward.y * rangeControl + side.y * (flankWeight + weave),
     };
+  }
+
+  aiAxisLeaveBase(vehicle, enemy, base) {
+    const toEnemy = new THREE.Vector2(enemy.x - vehicle.x, enemy.z - vehicle.z);
+    if (toEnemy.lengthSq() < 0.01) return { x: 0, y: vehicle.id === 1 ? -1 : 1 };
+    toEnemy.normalize();
+
+    const awayFromBase = new THREE.Vector2(vehicle.x - base.x, vehicle.z - base.z);
+    if (awayFromBase.lengthSq() < 0.01) {
+      awayFromBase.copy(toEnemy);
+    } else {
+      awayFromBase.normalize();
+    }
+
+    const side = new THREE.Vector2(-toEnemy.y, toEnemy.x).multiplyScalar(vehicle.ai.flankSide * 0.16);
+    const exit = toEnemy.multiplyScalar(0.92).addScaledVector(awayFromBase, 0.42).add(side);
+    if (exit.lengthSq() < 0.01) return { x: awayFromBase.x, y: awayFromBase.y };
+    exit.normalize();
+    return { x: exit.x, y: exit.y };
+  }
+
+  aiAxisToward(vehicle, target) {
+    const dx = target.x - vehicle.x;
+    const dz = target.z - vehicle.z;
+    const distance = Math.hypot(dx, dz) || 1;
+    return { x: dx / distance, y: dz / distance };
+  }
+
+  updateAiTactics(vehicle, enemy, dt) {
+    vehicle.ai.nextThink -= dt;
+    const threat = this.incomingStarlinkFor(vehicle);
+    if (threat) {
+      vehicle.ai.tactic = AI_TACTICS.evade;
+      vehicle.ai.weapon = "antiAir";
+      vehicle.selectedWeapon = "antiAir";
+      if (!this.antiAirMissiles.some((missile) => missile.ownerId === vehicle.id) && vehicle.energy >= ENERGY_ANTI_AIR_COST) {
+        this.tryLaunchAntiAir(vehicle);
+      }
+      return;
+    }
+
+    if (vehicle.ai.nextThink > 0) return;
+    vehicle.ai.nextThink = 0.16 + Math.random() * 0.26;
+    if (Math.random() < 0.28) vehicle.ai.flankSide *= -1;
+
+    const ownBase = this.baseOf(vehicle);
+    const enemyBase = this.baseOf(enemy);
+    const distance = distanceXZ(vehicle, enemy);
+    const insideOwnBase = ownBase && this.isInsideBase(vehicle, ownBase);
+    const enemyAtOwnBase = ownBase && this.isInsideBase(enemy, ownBase);
+    const canStarlink = this.canActivateStarlink(vehicle) && !this.activeStarlinks.some((strike) => strike.ownerId === vehicle.id);
+    const pressureScore = (vehicle.health - enemy.health) + (vehicle.energy - enemy.energy) * 0.35;
+
+    if (vehicle.energy < 18 || (vehicle.energy < 30 && distance > 92)) {
+      vehicle.ai.tactic = AI_TACTICS.resupply;
+    } else if (insideOwnBase && vehicle.energy < 82) {
+      vehicle.ai.tactic = AI_TACTICS.resupply;
+    } else if (enemyAtOwnBase) {
+      vehicle.ai.tactic = AI_TACTICS.press;
+    } else if (insideOwnBase && vehicle.energy >= 82) {
+      vehicle.ai.tactic = AI_TACTICS.press;
+    } else if (vehicle.health < 32 && distance < 92) {
+      vehicle.ai.tactic = AI_TACTICS.breakContact;
+    } else if (enemy.health < 38 || enemy.energy < 18 || enemy.slipTimer > 0.4 || pressureScore > 26) {
+      vehicle.ai.tactic = AI_TACTICS.press;
+    } else if (enemyBase && distanceXZ(enemy, enemyBase) > 70 && vehicle.health > 52 && vehicle.energy > 42 && Math.random() < 0.26) {
+      vehicle.ai.tactic = AI_TACTICS.capture;
+    } else if (distance < 42) {
+      vehicle.ai.tactic = AI_TACTICS.kite;
+    } else {
+      vehicle.ai.tactic = AI_TACTICS.flank;
+    }
+
+    const previousWeapon = vehicle.ai.weapon;
+    if (canStarlink && this.clock > 2.8 && (distance > 56 || enemy.health < 76 || Math.random() < 0.72)) {
+      vehicle.ai.weapon = "starlink";
+    } else if (distance >= 24 && distance <= 170 && vehicle.energy >= ENERGY_DYNAMITE_COST && Math.random() < 0.78) {
+      vehicle.ai.weapon = "dynamite";
+    } else if (enemy.slipTimer <= 0.2 && distance >= 12 && distance <= 156 && vehicle.energy >= ENERGY_BEARING_COST && Math.random() < 0.64) {
+      vehicle.ai.weapon = "bearing";
+    } else {
+      vehicle.ai.weapon = "cannon";
+    }
+    vehicle.selectedWeapon = vehicle.ai.weapon;
+    if (previousWeapon !== vehicle.ai.weapon && vehicle.ai.weapon !== "cannon" && this.clock - vehicle.ai.lastWeaponSwap > 1.4) {
+      this.pushLog(`${vehicle.name} AI 切换武器：${this.weaponLabel(vehicle)}`);
+      vehicle.ai.lastWeaponSwap = this.clock;
+    }
+  }
+
+  handleAiWeaponFire(vehicle, enemy, aimPoint) {
+    const distance = distanceXZ(vehicle, enemy);
+    const facing = forwardFromHeading(vehicle.heading);
+    const toEnemy = new THREE.Vector3(enemy.x - vehicle.x, 0, enemy.z - vehicle.z).normalize();
+    const aimQuality = facing.dot(toEnemy);
+    const weapon = vehicle.ai.weapon ?? "cannon";
+
+    if (weapon === "starlink" && this.canActivateStarlink(vehicle) && !this.activeStarlinks.some((strike) => strike.ownerId === vehicle.id)) {
+      this.tryActivateStarlink(vehicle);
+      vehicle.ai.weapon = "cannon";
+      vehicle.selectedWeapon = "cannon";
+      return;
+    }
+    if (vehicle.cooldown > 0 || aimQuality < 0.56) return;
+    if (!this.hasLineOfSight(vehicle, enemy)) return;
+
+    if (weapon === "dynamite" && distance >= 22 && distance <= 172 && vehicle.energy >= ENERGY_DYNAMITE_COST) {
+      this.fireDynamite(vehicle, predictedAimPoint(enemy, 0.46));
+      return;
+    }
+    if (weapon === "bearing" && enemy.slipTimer <= 0.25 && distance >= 10 && distance <= 158 && vehicle.energy >= ENERGY_BEARING_COST) {
+      this.fireBearing(vehicle, predictedAimPoint(enemy, 0.24));
+      return;
+    }
+    if (distance < 225 && aimQuality > 0.62 && Math.random() < vehicle.ai.fireBias * vehicle.ai.aggression) {
+      this.fire(vehicle, enemy, aimPoint);
+    }
   }
 
   aiWantsFire(vehicle, enemy) {
@@ -851,25 +1008,25 @@ export class GameScene {
     const facing = forwardFromHeading(vehicle.heading);
     const toEnemy = new THREE.Vector3(enemy.x - vehicle.x, 0, enemy.z - vehicle.z).normalize();
     const aimQuality = facing.dot(toEnemy);
-    return distance < 190 && aimQuality > 0.78 && Math.random() < vehicle.ai.fireBias;
+    return distance < 205 && aimQuality > 0.72 && Math.random() < vehicle.ai.fireBias * vehicle.ai.aggression;
   }
 
   aiWantsDynamite(vehicle, enemy) {
     if (vehicle.cooldown > 0 || vehicle.energy < ENERGY_DYNAMITE_COST) return false;
     const distance = distanceXZ(vehicle, enemy);
-    if (distance < 20 || distance > 122) return false;
+    if (distance < 20 || distance > 152) return false;
     const facing = forwardFromHeading(vehicle.heading);
     const toEnemy = new THREE.Vector3(enemy.x - vehicle.x, 0, enemy.z - vehicle.z).normalize();
-    return facing.dot(toEnemy) > 0.86 && Math.random() < 0.18;
+    return facing.dot(toEnemy) > 0.76 && Math.random() < 0.42;
   }
 
   aiWantsBearing(vehicle, enemy) {
     if (vehicle.cooldown > 0 || vehicle.energy < ENERGY_BEARING_COST) return false;
     const distance = distanceXZ(vehicle, enemy);
-    if (distance < 16 || distance > 135 || enemy.slipTimer > 0.9) return false;
+    if (distance < 12 || distance > 142 || enemy.slipTimer > 0.9) return false;
     const facing = forwardFromHeading(vehicle.heading);
     const toEnemy = new THREE.Vector3(enemy.x - vehicle.x, 0, enemy.z - vehicle.z).normalize();
-    return facing.dot(toEnemy) > 0.82 && Math.random() < 0.12;
+    return facing.dot(toEnemy) > 0.74 && Math.random() < 0.34;
   }
 
   fire(vehicle, enemy, aimPoint = predictedAimPoint(enemy, 0.16)) {
@@ -1283,10 +1440,10 @@ export class GameScene {
   }
 
   aiWantsStarlink(vehicle) {
-    if (this.clock < 7 || !this.canActivateStarlink(vehicle)) return false;
+    if (this.clock < 3.5 || !this.canActivateStarlink(vehicle)) return false;
     if (this.activeStarlinks.some((strike) => strike.ownerId === vehicle.id)) return false;
     const enemy = this.enemyOf(vehicle);
-    return distanceXZ(vehicle, enemy) > 62 && Math.random() < 0.012;
+    return distanceXZ(vehicle, enemy) > 50 && Math.random() < 0.03;
   }
 
   applyBearingHit(projectile, target, owner) {
