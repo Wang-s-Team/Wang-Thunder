@@ -11,6 +11,12 @@ export class MenuScene {
     this.onMode = (event) => {
       const mode = event.currentTarget.dataset.mode ?? "pve";
       this.audio.beep({ frequency: 220, duration: 0.12, type: "sawtooth", gain: 0.06 });
+      if (mode === "online" && !this.storage.currentUser()) {
+        this.showPanel(this.elements.accountPanel);
+        this.elements.accountMessage.textContent = "请先登录后使用在线联机 / PK";
+        this.elements.accountUsername.focus();
+        return;
+      }
       this.manager.go("game", { mode });
     };
     this.onBriefing = () => {
@@ -88,6 +94,7 @@ export class MenuScene {
     this.elements.result.classList.remove("screen--active");
     this.elements.startBtn.addEventListener("click", this.onMode);
     this.elements.duelBtn.addEventListener("click", this.onMode);
+    this.elements.onlineBtn.addEventListener("click", this.onMode);
     this.elements.aiBtn.addEventListener("click", this.onMode);
     this.elements.howBtn.addEventListener("click", this.onBriefing);
     this.elements.accountBtn.addEventListener("click", this.onAccount);
@@ -115,6 +122,7 @@ export class MenuScene {
     this.elements.briefing.classList.remove("screen--active");
     this.elements.startBtn.removeEventListener("click", this.onMode);
     this.elements.duelBtn.removeEventListener("click", this.onMode);
+    this.elements.onlineBtn.removeEventListener("click", this.onMode);
     this.elements.aiBtn.removeEventListener("click", this.onMode);
     this.elements.howBtn.removeEventListener("click", this.onBriefing);
     this.elements.accountBtn.removeEventListener("click", this.onAccount);

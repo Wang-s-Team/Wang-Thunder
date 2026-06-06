@@ -30,6 +30,7 @@ const elements = {
   result: document.querySelector("#result"),
   startBtn: document.querySelector("#start-btn"),
   duelBtn: document.querySelector("#duel-btn"),
+  onlineBtn: document.querySelector("#online-btn"),
   aiBtn: document.querySelector("#ai-btn"),
   howBtn: document.querySelector("#how-btn"),
   leaderboardBtn: document.querySelector("#leaderboard-btn"),
