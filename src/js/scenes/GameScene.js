@@ -2135,6 +2135,7 @@ export class GameScene {
     this.updateStarlinkBossBar(p1);
     this.updateAimHud(p1);
     this.updateRadar();
+    this.updateStrategicMap();
   }
 
   updateSetupHud(active) {
@@ -2314,6 +2315,75 @@ export class GameScene {
     ].join("");
   }
 
+  updateStrategicMap() {
+    const operator = this.activeRadarOperator();
+    if (!operator) {
+      this.elements.strategicMapBlips.innerHTML = "";
+      return;
+    }
+
+    const navBase = this.navigationActive ? this.baseOf(this.navigator) : null;
+    const starlinkReady = this.starlinkReadyFor(operator);
+    const starlinkTarget = this.enemyOf(operator);
+    const buildings = this.attackBlockers.map((blocker) => this.strategicMapBuildingFor(blocker));
+    const shadows = this.attackBlockers.map((blocker) => this.strategicMapShadowFor(blocker));
+    const projectileTracks = this.projectiles.map((projectile) => this.projectileStrategicTrack(projectile, navBase));
+    const starlinkTracks = this.activeStarlinks.map((strike) => this.starlinkStrategicTrack(strike, operator, navBase));
+    const antiAirTracks = this.antiAirMissiles.map((missile) => this.antiAirStrategicTrack(missile, navBase));
+    const dots = [
+      ...this.bases.map((base) => ({
+        x: base.x,
+        z: base.z,
+        kind: base.ownerId === 1 ? "base-blue" : "base-red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, base)),
+      })),
+      ...this.vehicles.map((vehicle) => ({
+        x: vehicle.x,
+        z: vehicle.z,
+        kind: starlinkReady && vehicle === starlinkTarget ? "starlink-target" : vehicle.id === 1 ? "blue" : "red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, vehicle)),
+      })),
+      ...this.deployables.map((item) => ({
+        x: item.x,
+        z: item.z,
+        kind: item.ownerId === 1 ? "speedometer-blue" : "speedometer-red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, item)),
+      })),
+      ...this.projectiles.map((projectile) => ({
+        x: projectile.position.x,
+        z: projectile.position.z,
+        kind: projectile.userData.owner === 1 ? "shot-blue" : "shot-red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, projectile.position)),
+      })),
+      ...this.activeStarlinks.map((strike) => ({
+        x: strike.position.x,
+        z: strike.position.z,
+        kind: strike.targetId === operator.id ? "starlink-incoming" : "starlink-outgoing",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, strike.position)),
+      })),
+      ...this.antiAirMissiles.map((missile) => ({
+        x: missile.group.position.x,
+        z: missile.group.position.z,
+        kind: missile.ownerId === operator.id ? "interceptor" : "shot-red",
+        occluded: Boolean(navBase && !this.hasLineOfSight(navBase, missile.group.position)),
+      })),
+    ];
+
+    this.elements.strategicMapBlips.innerHTML = [
+      ...shadows.map((shadow) => shadow ?? ""),
+      ...buildings.map((building) => building ?? ""),
+      ...projectileTracks.map((track) => track ?? ""),
+      ...starlinkTracks.map((track) => track ?? ""),
+      ...antiAirTracks.map((track) => track ?? ""),
+      ...dots.map((dot) => {
+        const position = this.strategicMapPositionFor(dot);
+        const classes = ["strategic-map__item", "strategic-map__blip", `strategic-map__blip--${dot.kind}`];
+        if (dot.occluded) classes.push("strategic-map__blip--occluded");
+        return `<span class="${classes.join(" ")}" style="left:${position.left}%;top:${position.top}%"></span>`;
+      }),
+    ].join("");
+  }
+
   radarTrackFor(strike, navBase = null) {
     const start = this.radarPositionFor(strike.start);
     const end = this.radarPositionFor(strike.target);
@@ -2342,6 +2412,79 @@ export class GameScene {
     const width = THREE.MathUtils.clamp((blocker.radius / ARENA.x) * 84, 2.2, 24);
     const height = THREE.MathUtils.clamp((blocker.radius / ((ARENA.zMax - ARENA.zMin) / 2)) * 84, 2.2, 24);
     return `<span class="radar__shadow" style="left:${position.left}%;top:${position.top}%;width:${width}%;height:${height}%"></span>`;
+  }
+
+  strategicMapPositionFor(point) {
+    const centerZ = ARENA_CENTER_Z;
+    const halfZ = (ARENA.zMax - ARENA.zMin) / 2;
+    return {
+      left: THREE.MathUtils.clamp(50 + (point.x / ARENA.x) * 46, 4, 96),
+      top: THREE.MathUtils.clamp(50 + ((point.z - centerZ) / halfZ) * 46, 4, 96),
+    };
+  }
+
+  strategicMapShadowFor(blocker) {
+    if (!blocker) return "";
+    const position = this.strategicMapPositionFor(blocker);
+    const width = THREE.MathUtils.clamp((blocker.radius / ARENA.x) * 92, 1.8, 24);
+    const height = THREE.MathUtils.clamp((blocker.radius / ((ARENA.zMax - ARENA.zMin) / 2)) * 92, 1.8, 24);
+    return `<span class="strategic-map__item strategic-map__shadow" style="left:${position.left}%;top:${position.top}%;width:${width}%;height:${height}%"></span>`;
+  }
+
+  strategicMapBuildingFor(blocker) {
+    if (!blocker) return "";
+    const position = this.strategicMapPositionFor(blocker);
+    const width = THREE.MathUtils.clamp((blocker.radius / ARENA.x) * 62, 1.4, 16);
+    const height = THREE.MathUtils.clamp((blocker.radius / ((ARENA.zMax - ARENA.zMin) / 2)) * 62, 1.4, 16);
+    return `<span class="strategic-map__item strategic-map__building" style="left:${position.left}%;top:${position.top}%;width:${width}%;height:${height}%"></span>`;
+  }
+
+  strategicMapTrackFor(start, end, color, blocked = false) {
+    const from = this.strategicMapPositionFor(start);
+    const to = this.strategicMapPositionFor(end);
+    const width = Math.hypot(to.left - from.left, to.top - from.top);
+    const angle = (Math.atan2(to.top - from.top, to.left - from.left) * 180) / Math.PI;
+    const classes = ["strategic-map__item", "strategic-map__track", `strategic-map__track--${color}`];
+    if (blocked) classes.push("strategic-map__track--blocked");
+    return `<span class="${classes.join(" ")}" style="left:${from.left}%;top:${from.top}%;width:${width}%;transform:rotate(${angle}deg)"></span>`;
+  }
+
+  projectileStrategicTrack(projectile, navBase = null) {
+    const velocity = projectile.userData.velocity?.clone?.();
+    if (!velocity || velocity.lengthSq() <= 0.01) return "";
+    const direction = velocity.normalize();
+    const length = projectile.userData.ciws ? 10 : projectile.userData.dynamite ? 7 : projectile.userData.bearing ? 9 : 12;
+    const start = projectile.position;
+    const end = projectile.position.clone().addScaledVector(direction, length);
+    return this.strategicMapTrackFor(
+      start,
+      end,
+      projectile.userData.owner === 1 ? "blue" : "red",
+      Boolean(navBase && !this.hasLineOfSight(navBase, projectile.position)),
+    );
+  }
+
+  starlinkStrategicTrack(strike, operator, navBase = null) {
+    return this.strategicMapTrackFor(
+      strike.start,
+      strike.target,
+      strike.targetId === operator?.id ? "red" : "gold",
+      Boolean(navBase && !this.hasLineOfSight(navBase, strike.position)),
+    );
+  }
+
+  antiAirStrategicTrack(missile, navBase = null) {
+    const velocity = missile.velocity?.clone?.();
+    if (!velocity || velocity.lengthSq() <= 0.01) return "";
+    const direction = velocity.normalize();
+    const start = missile.group.position;
+    const end = missile.group.position.clone().addScaledVector(direction, 14);
+    return this.strategicMapTrackFor(
+      start,
+      end,
+      missile.ownerId === 1 ? "blue" : "red",
+      Boolean(navBase && !this.hasLineOfSight(navBase, missile.group.position)),
+    );
   }
 
   starlinkReadyFor(vehicle) {
