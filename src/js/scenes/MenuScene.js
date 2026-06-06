@@ -1,6 +1,60 @@
 import * as THREE from "../../vendor/three.module.js";
 import { makeHumanCombatant } from "../core/threeFactories.js";
 
+const TUTORIAL_STEPS = [
+  {
+    title: "点击训练区",
+    copy: "点击左侧训练区，模拟进入战场后的画面锁定。",
+    checks: [
+      { id: "focus", label: "点击训练区" },
+    ],
+  },
+  {
+    title: "移动和冲刺",
+    copy: "依次按 W、A、S、D 熟悉移动，再按 Shift 体验冲刺耗能。",
+    checks: [
+      { id: "w", label: "前进 W" },
+      { id: "a", label: "左移 A" },
+      { id: "s", label: "后退 S" },
+      { id: "d", label: "右移 D" },
+      { id: "shift", label: "冲刺 Shift" },
+    ],
+  },
+  {
+    title: "布置测速器",
+    copy: "按 G 部署超声波测速器。正式对局开局会先进入场地布置阶段。",
+    checks: [
+      { id: "g", label: "部署 G" },
+    ],
+  },
+  {
+    title: "武器实践",
+    copy: "按 Space 射击，按 Q 发射雷管，按 R 发射滚珠轴承。注意能量会下降。",
+    checks: [
+      { id: "space", label: "主武器 Space" },
+      { id: "q", label: "雷管 Q" },
+      { id: "r", label: "滚珠 R" },
+    ],
+  },
+  {
+    title: "回基地补能",
+    copy: "用 WASD 把战员移动到基地圆环内，或直接点击基地练习撤回。能量会快速恢复。",
+    checks: [
+      { id: "base", label: "进入基地" },
+      { id: "charged", label: "能量回到 100%" },
+    ],
+  },
+  {
+    title: "雷达和星链",
+    copy: "按 T 切换星链模式，按 E 呼叫星链，按 F 发射防空武器。完成后就可以进入实战。",
+    checks: [
+      { id: "t", label: "切换 T" },
+      { id: "e", label: "呼叫 E" },
+      { id: "f", label: "防空 F" },
+    ],
+  },
+];
+
 export class MenuScene {
   constructor({ canvas, elements, storage, audio }) {
     this.canvas = canvas;
@@ -21,9 +75,12 @@ export class MenuScene {
     };
     this.onBriefing = () => {
       this.elements.briefing.classList.add("screen--active");
-      this.elements.closeBriefing.focus();
+      this.startTutorial();
     };
-    this.onClose = () => this.elements.briefing.classList.remove("screen--active");
+    this.onClose = () => {
+      this.elements.briefing.classList.remove("screen--active");
+      this.stopTutorial();
+    };
     this.onAccount = () => {
       this.showPanel(this.elements.accountPanel);
       this.elements.accountMessage.textContent = "";
@@ -85,6 +142,14 @@ export class MenuScene {
         this.onCloseAdmin();
       }
     };
+    this.onTutorialKeydown = (event) => this.handleTutorialKeydown(event);
+    this.onTutorialKeyup = (event) => this.handleTutorialKeyup(event);
+    this.onTutorialRangeClick = (event) => this.handleTutorialRangeClick(event);
+    this.onTutorialReset = () => this.startTutorial();
+    this.onTutorialStartGame = () => {
+      this.onClose();
+      this.manager.go("game", { mode: "pve" });
+    };
   }
 
   enter() {
@@ -113,7 +178,12 @@ export class MenuScene {
     this.elements.adminPanel.addEventListener("click", this.onSystemBackdrop);
     this.elements.closeBriefing.addEventListener("click", this.onClose);
     this.elements.briefing.addEventListener("click", this.onBriefingBackdrop);
+    this.elements.tutorialRange.addEventListener("click", this.onTutorialRangeClick);
+    this.elements.tutorialReset.addEventListener("click", this.onTutorialReset);
+    this.elements.tutorialStartGame.addEventListener("click", this.onTutorialStartGame);
     window.addEventListener("keydown", this.onKeydown);
+    window.addEventListener("keydown", this.onTutorialKeydown);
+    window.addEventListener("keyup", this.onTutorialKeyup);
     this.resize(this.canvas.clientWidth || window.innerWidth, this.canvas.clientHeight || window.innerHeight);
   }
 
@@ -141,7 +211,13 @@ export class MenuScene {
     this.elements.adminPanel.removeEventListener("click", this.onSystemBackdrop);
     this.elements.closeBriefing.removeEventListener("click", this.onClose);
     this.elements.briefing.removeEventListener("click", this.onBriefingBackdrop);
+    this.elements.tutorialRange.removeEventListener("click", this.onTutorialRangeClick);
+    this.elements.tutorialReset.removeEventListener("click", this.onTutorialReset);
+    this.elements.tutorialStartGame.removeEventListener("click", this.onTutorialStartGame);
     window.removeEventListener("keydown", this.onKeydown);
+    window.removeEventListener("keydown", this.onTutorialKeydown);
+    window.removeEventListener("keyup", this.onTutorialKeyup);
+    this.stopTutorial();
   }
 
   showPanel(panel) {
@@ -234,7 +310,224 @@ export class MenuScene {
       .join("");
   }
 
-  update() {}
+  startTutorial() {
+    if (this.tutorial?.advanceTimer) {
+      window.clearTimeout(this.tutorial.advanceTimer);
+    }
+    this.tutorial = {
+      active: true,
+      stepIndex: 0,
+      checks: new Set(),
+      keys: new Set(),
+      avatar: { x: 56, y: 58 },
+      energy: 100,
+      targetArmor: 100,
+      advanceTimer: null,
+      missileTimer: 0,
+    };
+    this.elements.tutorialRange.focus();
+    this.elements.tutorialStartGame.disabled = true;
+    this.elements.tutorialSpeedometer.classList.remove("tutorial-range__speedometer--active");
+    this.elements.tutorialMissile.classList.remove("tutorial-range__missile--active");
+    this.renderTutorial();
+  }
+
+  stopTutorial() {
+    if (!this.tutorial) return;
+    this.tutorial.active = false;
+    window.clearTimeout(this.tutorial.advanceTimer);
+    this.tutorial.keys.clear();
+  }
+
+  handleTutorialRangeClick(event) {
+    if (!this.isTutorialOpen()) return;
+    const rect = this.elements.tutorialRange.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 100;
+    const y = ((event.clientY - rect.top) / rect.height) * 100;
+    if (this.tutorial.stepIndex > 0) {
+      this.tutorial.avatar.x = clamp(x, 10, 90);
+      this.tutorial.avatar.y = clamp(y, 12, 86);
+      this.checkTutorialBase();
+      this.renderTutorial();
+    }
+    this.markTutorialCheck("focus");
+  }
+
+  handleTutorialKeydown(event) {
+    if (!this.isTutorialOpen()) return;
+    const key = tutorialKey(event);
+    if (!key) return;
+    if (key === "space" || key === "shift") event.preventDefault();
+    if (this.stepComplete() && this.tutorial.advanceTimer) {
+      this.advanceTutorialStep();
+    }
+    this.tutorial.keys.add(key);
+    this.flashTutorialKey(key);
+
+    if (["w", "a", "s", "d", "shift", "g", "space", "q", "r", "t", "e", "f"].includes(key)) {
+      this.markTutorialCheck(key);
+    }
+    this.nudgeTutorialAvatar(key);
+    if (key === "g") {
+      this.elements.tutorialSpeedometer.classList.add("tutorial-range__speedometer--active");
+      this.audio.beep({ frequency: 360, duration: 0.08, gain: 0.04 });
+    }
+    if (key === "space") this.applyTutorialWeapon(12, 16);
+    if (key === "q") this.applyTutorialWeapon(24, 30);
+    if (key === "r") this.applyTutorialWeapon(18, 20);
+    if (key === "e" || key === "f") {
+      this.tutorial.missileTimer = 0.8;
+      this.elements.tutorialMissile.classList.add("tutorial-range__missile--active");
+      this.audio.beep({ frequency: key === "e" ? 180 : 520, duration: 0.1, type: "sawtooth", gain: 0.045 });
+    }
+    this.renderTutorial();
+  }
+
+  handleTutorialKeyup(event) {
+    if (!this.tutorial) return;
+    const key = tutorialKey(event);
+    if (key) this.tutorial.keys.delete(key);
+  }
+
+  applyTutorialWeapon(damage, cost) {
+    if (!this.tutorial?.active) return;
+    this.tutorial.targetArmor = Math.max(0, this.tutorial.targetArmor - damage);
+    this.tutorial.energy = Math.max(0, this.tutorial.energy - cost);
+    this.elements.tutorialTarget.classList.add("tutorial-range__target--hit");
+    window.setTimeout(() => this.elements.tutorialTarget.classList.remove("tutorial-range__target--hit"), 140);
+    this.audio.beep({ frequency: 120 + damage * 8, duration: 0.08, type: "square", gain: 0.035 });
+  }
+
+  markTutorialCheck(id) {
+    if (!this.tutorial?.active) return;
+    const step = TUTORIAL_STEPS[this.tutorial.stepIndex];
+    if (!step?.checks.some((check) => check.id === id)) return;
+    this.tutorial.checks.add(id);
+    if (this.stepComplete() && !this.tutorial.advanceTimer) {
+      this.tutorial.advanceTimer = window.setTimeout(() => {
+        if (!this.isTutorialOpen()) return;
+        this.advanceTutorialStep();
+      }, 550);
+    }
+  }
+
+  stepComplete() {
+    const step = TUTORIAL_STEPS[this.tutorial.stepIndex];
+    return step.checks.every((check) => this.tutorial.checks.has(check.id));
+  }
+
+  updateTutorial(dt) {
+    if (!this.isTutorialOpen()) return;
+    const keys = this.tutorial.keys;
+    const speed = keys.has("shift") ? 42 : 28;
+    const dx = (Number(keys.has("d")) - Number(keys.has("a"))) * speed * dt;
+    const dy = (Number(keys.has("s")) - Number(keys.has("w"))) * speed * dt;
+    this.tutorial.avatar.x = clamp(this.tutorial.avatar.x + dx, 10, 90);
+    this.tutorial.avatar.y = clamp(this.tutorial.avatar.y + dy, 12, 86);
+    if (Math.abs(dx) + Math.abs(dy) > 0) {
+      this.tutorial.energy = Math.max(0, this.tutorial.energy - (keys.has("shift") ? 14 : 4) * dt);
+    }
+
+    const inBase = this.checkTutorialBase();
+    if (inBase) {
+      this.tutorial.energy = Math.min(100, this.tutorial.energy + 48 * dt);
+      if (this.tutorial.energy >= 99.5) {
+        this.tutorial.energy = 100;
+        this.markTutorialCheck("charged");
+      }
+    }
+
+    if (this.tutorial.missileTimer > 0) {
+      this.tutorial.missileTimer -= dt;
+      if (this.tutorial.missileTimer <= 0) {
+        this.elements.tutorialMissile.classList.remove("tutorial-range__missile--active");
+      }
+    }
+    this.renderTutorial();
+  }
+
+  nudgeTutorialAvatar(key) {
+    if (!this.tutorial?.active) return;
+    const amount = key === "shift" ? 0 : 5.5;
+    if (key === "w") this.tutorial.avatar.y = clamp(this.tutorial.avatar.y - amount, 12, 86);
+    if (key === "s") this.tutorial.avatar.y = clamp(this.tutorial.avatar.y + amount, 12, 86);
+    if (key === "a") this.tutorial.avatar.x = clamp(this.tutorial.avatar.x - amount, 10, 90);
+    if (key === "d") this.tutorial.avatar.x = clamp(this.tutorial.avatar.x + amount, 10, 90);
+    this.checkTutorialBase();
+  }
+
+  checkTutorialBase() {
+    if (!this.tutorial?.active) return false;
+    const inBase = distance2d(this.tutorial.avatar, { x: 18, y: 74 }) < 18;
+    if (inBase) {
+      this.markTutorialCheck("base");
+      if (TUTORIAL_STEPS[this.tutorial.stepIndex]?.checks.some((check) => check.id === "charged")) {
+        this.tutorial.energy = 100;
+        this.markTutorialCheck("charged");
+      }
+    }
+    return inBase;
+  }
+
+  advanceTutorialStep() {
+    if (!this.tutorial?.active) return;
+    if (this.tutorial.stepIndex >= TUTORIAL_STEPS.length - 1) {
+      window.clearTimeout(this.tutorial.advanceTimer);
+      this.tutorial.advanceTimer = null;
+      this.elements.tutorialStartGame.disabled = false;
+      this.renderTutorial();
+      return;
+    }
+    this.tutorial.stepIndex += 1;
+    this.tutorial.checks.clear();
+    window.clearTimeout(this.tutorial.advanceTimer);
+    this.tutorial.advanceTimer = null;
+    this.audio.beep({ frequency: 280 + this.tutorial.stepIndex * 34, duration: 0.1, gain: 0.04 });
+    this.renderTutorial();
+  }
+
+  renderTutorial() {
+    if (!this.tutorial) return;
+    const step = TUTORIAL_STEPS[this.tutorial.stepIndex];
+    const totalComplete = this.tutorial.stepIndex + (this.stepComplete() ? 1 : 0);
+    const percent = Math.round((totalComplete / TUTORIAL_STEPS.length) * 100);
+    this.elements.tutorialProgressFill.style.width = `${percent}%`;
+    this.elements.tutorialStepCount.textContent = `${String(this.tutorial.stepIndex + 1).padStart(2, "0")} / ${String(TUTORIAL_STEPS.length).padStart(2, "0")}`;
+    this.elements.tutorialStepTitle.textContent = step.title;
+    this.elements.tutorialStepCopy.textContent = step.copy;
+    this.elements.tutorialEnergyText.textContent = `${Math.round(this.tutorial.energy)}%`;
+    this.elements.tutorialEnergyFill.style.width = `${this.tutorial.energy}%`;
+    this.elements.tutorialTargetText.textContent = `${Math.round(this.tutorial.targetArmor)}%`;
+    this.elements.tutorialTargetFill.style.width = `${this.tutorial.targetArmor}%`;
+    this.elements.tutorialAvatar.style.left = `${this.tutorial.avatar.x}%`;
+    this.elements.tutorialAvatar.style.top = `${this.tutorial.avatar.y}%`;
+    this.elements.tutorialReticle.style.left = `${this.tutorial.avatar.x + 14}%`;
+    this.elements.tutorialReticle.style.top = `${this.tutorial.avatar.y - 8}%`;
+    this.elements.tutorialChecks.innerHTML = step.checks
+      .map((check) => {
+        const complete = this.tutorial.checks.has(check.id);
+        return `<span class="${complete ? "tutorial-check--done" : ""}">${complete ? "完成" : "待做"} · ${check.label}</span>`;
+      })
+      .join("");
+
+    const finished = this.tutorial.stepIndex === TUTORIAL_STEPS.length - 1 && this.stepComplete();
+    this.elements.tutorialStartGame.disabled = !finished;
+  }
+
+  isTutorialOpen() {
+    return Boolean(this.tutorial?.active && this.elements.briefing.classList.contains("screen--active"));
+  }
+
+  flashTutorialKey(key) {
+    const node = this.elements.tutorialTrainer.querySelector(`[data-tutorial-key="${key}"]`);
+    if (!node) return;
+    node.classList.add("tutorial-inputs__key--active");
+    window.setTimeout(() => node.classList.remove("tutorial-inputs__key--active"), 180);
+  }
+
+  update(dt) {
+    this.updateTutorial(dt);
+  }
 
   resize(width, height) {
     this.world.camera.aspect = width / height;
@@ -261,6 +554,53 @@ function leaderboardRow(user) {
       <small>最高波次 ${user.bestWave ?? 0}</small>
     </article>
   `;
+}
+
+function tutorialKey(event) {
+  const codeMap = {
+    KeyW: "w",
+    KeyA: "a",
+    KeyS: "s",
+    KeyD: "d",
+    KeyG: "g",
+    KeyQ: "q",
+    KeyR: "r",
+    KeyT: "t",
+    KeyE: "e",
+    KeyF: "f",
+    ShiftLeft: "shift",
+    ShiftRight: "shift",
+    Space: "space",
+  };
+  if (codeMap[event.code]) return codeMap[event.code];
+  if (event.key === "Shift") return "shift";
+  const key = event.key.toLowerCase();
+  const aliasMap = {
+    keyw: "w",
+    keya: "a",
+    keys: "s",
+    keyd: "d",
+    keyg: "g",
+    keyq: "q",
+    keyr: "r",
+    keyt: "t",
+    keye: "e",
+    keyf: "f",
+    shiftleft: "shift",
+    shiftright: "shift",
+  };
+  if (aliasMap[key]) return aliasMap[key];
+  if (key === " ") return "space";
+  if (["w", "a", "s", "d", "g", "q", "r", "t", "e", "f"].includes(key)) return key;
+  return null;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function distance2d(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function escapeHtml(value) {
