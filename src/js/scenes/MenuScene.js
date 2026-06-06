@@ -55,6 +55,7 @@ const TUTORIAL_STEPS = [
     ],
   },
 ];
+const TUTORIAL_ENERGY_COST_MULTIPLIER = 0.2;
 
 export class MenuScene {
   constructor({ canvas, elements, storage, audio }) {
@@ -376,9 +377,9 @@ export class MenuScene {
     if (["1", "2", "3", "4", "5"].includes(key)) {
       this.audio.beep({ frequency: 420 + Number(key) * 70, duration: 0.06, type: "triangle", gain: 0.04 });
     }
-    if (key === "space") this.applyTutorialWeapon(12, 16);
-    if (key === "q") this.applyTutorialWeapon(24, 30);
-    if (key === "r") this.applyTutorialWeapon(18, 20);
+    if (key === "space") this.applyTutorialWeapon(12, 16 * TUTORIAL_ENERGY_COST_MULTIPLIER);
+    if (key === "q") this.applyTutorialWeapon(24, 30 * TUTORIAL_ENERGY_COST_MULTIPLIER);
+    if (key === "r") this.applyTutorialWeapon(18, 20 * TUTORIAL_ENERGY_COST_MULTIPLIER);
     if (key === "e" || key === "f") {
       this.tutorial.missileTimer = 0.8;
       this.elements.tutorialMissile.classList.add("tutorial-range__missile--active");
@@ -429,7 +430,10 @@ export class MenuScene {
     this.tutorial.avatar.x = clamp(this.tutorial.avatar.x + dx, 10, 90);
     this.tutorial.avatar.y = clamp(this.tutorial.avatar.y + dy, 12, 86);
     if (Math.abs(dx) + Math.abs(dy) > 0) {
-      this.tutorial.energy = Math.max(0, this.tutorial.energy - (keys.has("shift") ? 14 : 4) * dt);
+      this.tutorial.energy = Math.max(
+        0,
+        this.tutorial.energy - (keys.has("shift") ? 14 : 4) * TUTORIAL_ENERGY_COST_MULTIPLIER * dt,
+      );
     }
 
     const inBase = this.checkTutorialBase();
