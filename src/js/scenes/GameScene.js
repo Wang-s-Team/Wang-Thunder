@@ -1,6 +1,7 @@
 import * as THREE from "../../vendor/three.module.js";
 import { radioLines } from "../../data/prompts.js";
 import {
+  battlefieldMapById,
   makeBase,
   makeBattlefield,
   makeDust,
@@ -10,6 +11,7 @@ import {
   makeHumanCombatant,
   makeTank,
   makeTracer,
+  randomBattlefieldMap,
 } from "../core/threeFactories.js";
 
 const ROUND_SECONDS = 240;
@@ -69,19 +71,23 @@ export class GameScene {
   enter(payload = {}) {
     this.mode = payload.mode ?? "pve";
     this.modeInfo = MODES[this.mode] ?? MODES.pve;
+    this.mapConfig = payload.mapId ? battlefieldMapById(payload.mapId) : randomBattlefieldMap();
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x07090d);
-    this.scene.fog = new THREE.Fog(0x07090d, 150, 680);
+    const fog = this.mapConfig.fog ?? { color: 0x07090d, near: 150, far: 680 };
+    this.scene.background = new THREE.Color(this.mapConfig.background ?? fog.color);
+    this.scene.fog = new THREE.Fog(fog.color, fog.near, fog.far);
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 820);
     this.camera.position.set(-16, 3.1, 32);
     this.p2Camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.1, 820);
     this.p2Camera.position.set(74, 9, -204);
 
     setupLighting(this.scene);
-    const battlefield = makeBattlefield();
+    const battlefield = makeBattlefield(this.mapConfig);
     this.navBlockers = battlefield.userData.navBlockers ?? [];
     this.attackBlockers = battlefield.userData.attackBlockers ?? [];
     this.scene.add(battlefield);
+    const blueStart = this.mapConfig.blue ?? { base: { x: -78, z: 28 }, vehicle: { x: -74, z: 24, heading: 0 } };
+    const redStart = this.mapConfig.red ?? { base: { x: 78, z: -228 }, vehicle: { x: 74, z: -224, heading: Math.PI } };
 
     this.bases = [
       this.createBase({
@@ -89,16 +95,16 @@ export class GameScene {
         name: "蓝方基地",
         color: 0x2f5f78,
         accent: 0x43e0ff,
-        x: -78,
-        z: 28,
+        x: blueStart.base.x,
+        z: blueStart.base.z,
       }),
       this.createBase({
         ownerId: 2,
         name: "红方基地",
         color: 0x743941,
         accent: 0xff4f64,
-        x: 78,
-        z: -228,
+        x: redStart.base.x,
+        z: redStart.base.z,
       }),
     ];
 
@@ -110,9 +116,9 @@ export class GameScene {
         label: "P1 HUM",
         color: 0x2f5f78,
         accent: 0x43e0ff,
-        x: -74,
-        z: 24,
-        heading: 0,
+        x: blueStart.vehicle.x,
+        z: blueStart.vehicle.z,
+        heading: blueStart.vehicle.heading ?? 0,
       }),
       this.createVehicle({
         id: 2,
@@ -121,11 +127,20 @@ export class GameScene {
         label: this.mode === "online" ? "PK ONLINE" : undefined,
         color: 0x743941,
         accent: 0xff4f64,
-        x: 74,
-        z: -224,
-        heading: Math.PI,
+        x: redStart.vehicle.x,
+        z: redStart.vehicle.z,
+        heading: redStart.vehicle.heading ?? Math.PI,
       }),
     ];
+    this.firstPerson = {
+      yaw: blueStart.vehicle.heading ?? 0,
+      pitch: 0,
+      eyeHeight: 3.05,
+      bob: 0,
+      recoil: 0,
+    };
+    this.camera.position.set(blueStart.vehicle.x, 3.1, blueStart.vehicle.z);
+    this.p2Camera.position.set(redStart.vehicle.x, 9, redStart.vehicle.z + 20);
 
     this.projectiles = [];
     this.sparks = [];
@@ -154,14 +169,7 @@ export class GameScene {
     this.logs = [];
     this.navigationActive = false;
     this.navigator = null;
-    this.navFocus = new THREE.Vector3(-78, 0, 28);
-    this.firstPerson = {
-      yaw: 0,
-      pitch: 0,
-      eyeHeight: 3.05,
-      bob: 0,
-      recoil: 0,
-    };
+    this.navFocus = new THREE.Vector3(blueStart.base.x, 0, blueStart.base.z);
 
     this.elements.hud.classList.add("hud--active");
     this.elements.hud.classList.add("hud--first-person");
@@ -169,6 +177,7 @@ export class GameScene {
     this.elements.hud.classList.toggle("hud--split-screen", this.usesSplitScreen());
     this.elements.pause.classList.remove("pause-layer--active");
     this.pushLog(`${this.modeInfo.name} 已启动`);
+    this.pushLog(`地图：${this.mapConfig.name} - ${this.mapConfig.briefing}`);
     this.pushLog("开局前进入场地布置，双方可部署超声波测速器");
     this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 雷管，R 滚珠轴承，T 切换星链模式");
     if (this.mode === "online") {
