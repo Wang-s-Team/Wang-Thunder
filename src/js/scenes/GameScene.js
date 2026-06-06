@@ -49,6 +49,7 @@ const DEPLOY_CURSOR_SPEED = 72;
 const MODES = {
   pve: { name: "人机对战", controllers: ["human1", "ai"], phase: "玩家一号 VS AI" },
   pvp: { name: "本地双人", controllers: ["human1", "human2"], phase: "本地双人对战" },
+  online: { name: "在线联机 / PK", controllers: ["human1", "ai"], phase: "在线 PK" },
   aivai: { name: "机机对战", controllers: ["ai", "ai"], phase: "AI 裁判观战" },
 };
 
@@ -106,6 +107,7 @@ export class GameScene {
         id: 1,
         name: "蓝方雷霆",
         controller: this.modeInfo.controllers[0],
+        label: "P1 HUM",
         color: 0x2f5f78,
         accent: 0x43e0ff,
         x: -74,
@@ -116,6 +118,7 @@ export class GameScene {
         id: 2,
         name: "红方错题",
         controller: this.modeInfo.controllers[1],
+        label: this.mode === "online" ? "PK ONLINE" : undefined,
         color: 0x743941,
         accent: 0xff4f64,
         x: 74,
@@ -168,6 +171,9 @@ export class GameScene {
     this.pushLog(`${this.modeInfo.name} 已启动`);
     this.pushLog("开局前进入场地布置，双方可部署超声波测速器");
     this.pushLog("点击画面锁定鼠标，WASD 移动，左键开火，右键/Q 雷管，R 滚珠轴承，T 切换星链模式");
+    if (this.mode === "online") {
+      this.pushLog("在线 PK 使用人机对战同款本机快捷键，远端玩家不占用本地 P2 键位");
+    }
     if (this.usesSplitScreen()) {
       this.pushLog("双视角已开启：P1 上屏，P2 下屏");
     }
@@ -300,13 +306,13 @@ export class GameScene {
     renderer.render(this.scene, camera);
   }
 
-  createVehicle({ id, name, controller, color, accent, x, z, heading }) {
+  createVehicle({ id, name, controller, label, color, accent, x, z, heading }) {
     const isPlayerSide = id === 1;
     const group = isPlayerSide ? makeHumanCombatant({ color, accent }) : makeTank({ color, accent });
-    const label = makeLabelSprite(`${id === 1 ? "P1" : "P2"} ${controller === "ai" ? "AI" : "HUM"}`, accent);
-    label.position.y = 4.15;
-    label.scale.set(4.2, 1.28, 1);
-    group.add(label);
+    const nameplate = makeLabelSprite(label ?? `${id === 1 ? "P1" : "P2"} ${controller === "ai" ? "AI" : "HUM"}`, accent);
+    nameplate.position.y = 4.15;
+    nameplate.scale.set(4.2, 1.28, 1);
+    group.add(nameplate);
     group.position.set(x, 0, z);
     group.rotation.y = heading;
     this.scene.add(group);
