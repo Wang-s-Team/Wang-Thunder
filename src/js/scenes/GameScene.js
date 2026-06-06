@@ -22,6 +22,7 @@ const PROJECTILE_BOUNDS = { x: ARENA.x + 80, zMin: ARENA.zMin - 90, zMax: ARENA.
 const BASE_RADIUS = 20;
 const BAD_COMPUTER_REPAIR_SECONDS = 6;
 const CIWS_RATE_PER_SECOND = 13000 / 60;
+const BASE_SHIELD_DURATION_SECONDS = 45;
 const ENERGY_MAX = 100;
 const ENERGY_RECHARGE_PER_SECOND = 52;
 const ENERGY_MOVE_PER_SECOND = 2.3;
@@ -531,6 +532,9 @@ export class GameScene {
       x,
       z,
       radius: BASE_RADIUS,
+      shieldRadius: group.userData.shieldRadius ?? BASE_RADIUS + 3.6,
+      shieldTimer: BASE_SHIELD_DURATION_SECONDS,
+      shieldOfflineAnnounced: false,
       computerRepair: 0,
       ciwsAccumulator: 0,
       group,
@@ -538,6 +542,8 @@ export class GameScene {
       muzzle: group.userData.muzzle,
       captureRing: group.userData.captureRing,
       perimeter: group.userData.perimeter,
+      shield: group.userData.shield,
+      shieldRing: group.userData.shieldRing,
       badComputer: group.userData.badComputer,
       badComputerScreen: group.userData.badComputerScreen,
       badComputerSmoke: group.userData.badComputerSmoke,
@@ -1734,6 +1740,12 @@ export class GameScene {
         projectile.rotation.z += dt * projectile.userData.spin * 0.7;
       }
 
+      const shieldImpact = projectile.userData.life > 0 ? this.projectileShieldImpact(projectile, previousPosition) : null;
+      if (shieldImpact) {
+        this.absorbProjectileByShield(projectile, shieldImpact);
+        continue;
+      }
+
       const coverImpact = projectile.userData.life > 0 ? this.projectileCoverImpact(projectile, previousPosition) : null;
       if (coverImpact) {
         this.absorbProjectileByCover(projectile, coverImpact);
@@ -1760,6 +1772,11 @@ export class GameScene {
       const owner = this.vehicles.find((vehicle) => vehicle.id === base.ownerId);
       const enemy = owner ? this.enemyOf(owner) : null;
       if (!owner || !enemy || this.finished) continue;
+      base.shieldTimer = Math.max(0, base.shieldTimer - dt);
+      if (!this.baseShieldActive(base) && !base.shieldOfflineAnnounced) {
+        this.pushLog(`${base.name} 防护盾已离线`);
+        base.shieldOfflineAnnounced = true;
+      }
 
       const defenderInside = owner.alive && this.isInsideBase(owner, base);
       const defenderMercInside = this.mercenaries.some(
@@ -1781,6 +1798,7 @@ export class GameScene {
       if (base.perimeter?.material) {
         base.perimeter.material.opacity = 0.34 + Math.sin(this.clock * 4 + base.ownerId) * 0.06;
       }
+      this.updateBaseShieldVisual(base);
       if (base.badComputer) {
         base.badComputer.rotation.y += Math.sin(this.clock * 9 + base.ownerId) * base.computerRepair * dt * 0.04;
       }
@@ -2288,6 +2306,11 @@ export class GameScene {
       const previous = missile.group.position.clone();
       missile.group.position.addScaledVector(missile.velocity, dt);
       missile.group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
+      const shieldImpact = this.antiAirShieldImpact(missile, previous);
+      if (shieldImpact) {
+        this.absorbAntiAirByShield(missile, shieldImpact);
+        continue;
+      }
       missile.group.userData.trailTimer = (missile.group.userData.trailTimer ?? 0) - dt;
       if (missile.group.userData.trailTimer <= 0) {
         this.addTracer(previous, missile.group.position.clone(), owner?.accent ?? 0xffd166);
@@ -2505,6 +2528,11 @@ export class GameScene {
     if (!owner) return;
     for (const target of this.combatUnits()) {
       if (!target.alive || this.teamOf(target) === ownerTeam) continue;
+      const shieldBase = this.shieldedBaseBlockingBlast(projectile.position, target, ownerTeam);
+      if (shieldBase) {
+        this.pushCoverLog(`${shieldBase.name} 防护盾隔绝雷管冲击`);
+        continue;
+      }
       const distance = distanceXZ(projectile.position, target);
       if (distance > DYNAMITE_RADIUS) continue;
       const falloff = 1 - distance / DYNAMITE_RADIUS;
@@ -2740,7 +2768,7 @@ export class GameScene {
       : this.input.pointerLocked
         ? "鼠标锁定"
         : "点击画面锁定鼠标";
-    return `${baseState} · ${this.starlinkStatusText()}`;
+    return `${baseState} · ${this.baseShieldStatusText(primaryVehicle)} · ${this.starlinkStatusText()}`;
   }
 
   starlinkStatusText() {
@@ -3107,6 +3135,16 @@ export class GameScene {
     return this.bases.find((base) => base.ownerId === vehicle.id);
   }
 
+  baseShieldActive(base) {
+    return Boolean(base && base.shieldTimer > 0);
+  }
+
+  baseShieldStatusText(vehicle) {
+    const base = this.baseOf(vehicle);
+    if (!base) return "防护盾离线";
+    return this.baseShieldActive(base) ? `防护盾${Math.ceil(base.shieldTimer)}s` : "防护盾离线";
+  }
+
   energyStatusFor(vehicle) {
     const base = this.baseOf(vehicle);
     const repair = Math.round((base?.computerRepair ?? 0) * 100);
@@ -3191,6 +3229,11 @@ export class GameScene {
     return distanceXZ(vehicle, base) <= base.radius;
   }
 
+  isInsideBaseShield(subject, base) {
+    if (!subject || !base) return false;
+    return distanceXZ(subject, base) <= base.shieldRadius;
+  }
+
   hasLineOfSight(origin, target) {
     if (!origin || !target) return false;
     for (const blocker of this.navBlockers) {
@@ -3219,6 +3262,42 @@ export class GameScene {
       closest.point.y = THREE.MathUtils.clamp(impactY, 0.22, maxHeight);
     }
     return closest;
+  }
+
+  projectileShieldImpact(projectile, previousPosition) {
+    const ownerTeam = this.projectileOwnerTeam(projectile);
+    let closest = null;
+    for (const base of this.bases) {
+      if (!this.baseShieldActive(base)) continue;
+      if (base.ownerId === ownerTeam) continue;
+      if (this.isInsideBaseShield(previousPosition, base)) continue;
+      const t = segmentCircleIntersectionT(previousPosition, projectile.position, base, base.shieldRadius);
+      if (t === null) continue;
+      const impactY = THREE.MathUtils.lerp(previousPosition.y, projectile.position.y, t);
+      if (impactY < -0.2 || impactY > base.shieldRadius + 0.8) continue;
+      if (closest && t >= closest.t) continue;
+      closest = {
+        t,
+        base,
+        point: previousPosition.clone().lerp(projectile.position, t),
+      };
+      closest.point.y = THREE.MathUtils.clamp(impactY, 0.24, base.shieldRadius);
+    }
+    return closest;
+  }
+
+  absorbProjectileByShield(projectile, impact) {
+    projectile.position.copy(impact.point);
+    if (projectile.userData.dynamite) {
+      this.detonateDynamite(projectile);
+    } else {
+      projectile.userData.life = 0;
+      this.addExplosion(impact.point, impact.base.accent, projectile.userData.ciws ? 2.6 : 7.5);
+    }
+    if (!projectile.userData.ciws) {
+      this.shake = Math.max(this.shake, 0.3);
+    }
+    this.pushCoverLog(`${impact.base.name} 防护盾挡下${projectile.userData.dynamite ? "雷管" : projectile.userData.bearing ? "滚珠轴承" : projectile.userData.ciws ? "近防炮火力" : "射击"}`);
   }
 
   absorbProjectileByCover(projectile, impact) {
@@ -3251,6 +3330,17 @@ export class GameScene {
     return 1;
   }
 
+  shieldedBaseBlockingBlast(origin, target, ownerTeam) {
+    for (const base of this.bases) {
+      if (!this.baseShieldActive(base)) continue;
+      if (base.ownerId === ownerTeam) continue;
+      if (!this.isInsideBaseShield(target, base)) continue;
+      if (distanceXZ(origin, base) < base.shieldRadius - 0.1) continue;
+      return base;
+    }
+    return null;
+  }
+
   resolveVehicleCoverCollision(vehicle) {
     for (const blocker of this.attackBlockers) {
       const minDistance = blocker.radius + 1.85;
@@ -3274,6 +3364,58 @@ export class GameScene {
     if (this.coverLogCooldown > 0) return;
     this.pushLog(line);
     this.coverLogCooldown = 1.1;
+  }
+
+  antiAirShieldImpact(missile, previousPosition) {
+    let closest = null;
+    for (const base of this.bases) {
+      if (!this.baseShieldActive(base)) continue;
+      if (base.ownerId === missile.ownerId) continue;
+      if (this.isInsideBaseShield(previousPosition, base)) continue;
+      const t = segmentCircleIntersectionT(previousPosition, missile.group.position, base, base.shieldRadius);
+      if (t === null) continue;
+      const impactY = THREE.MathUtils.lerp(previousPosition.y, missile.group.position.y, t);
+      if (impactY < -0.2 || impactY > base.shieldRadius + 1.2) continue;
+      if (closest && t >= closest.t) continue;
+      closest = {
+        t,
+        base,
+        point: previousPosition.clone().lerp(missile.group.position, t),
+      };
+      closest.point.y = THREE.MathUtils.clamp(impactY, 0.3, base.shieldRadius);
+    }
+    return closest;
+  }
+
+  absorbAntiAirByShield(missile, impact) {
+    missile.group.position.copy(impact.point);
+    missile.life = 0;
+    missile.intercepted = true;
+    this.addExplosion(impact.point, impact.base.accent, 12);
+    this.shake = Math.max(this.shake, 0.42);
+    this.pushCoverLog(`${impact.base.name} 防护盾挡下防空武器`);
+  }
+
+  updateBaseShieldVisual(base) {
+    if (!base?.shield || !base?.shieldRing) return;
+    const active = this.baseShieldActive(base);
+    base.shield.visible = active;
+    base.shieldRing.visible = active;
+    if (!active) {
+      if (base.shield.material) base.shield.material.opacity = 0;
+      if (base.shieldRing.material) base.shieldRing.material.opacity = 0;
+      return;
+    }
+    const pulse = 0.5 + 0.5 * Math.sin(this.clock * 3.2 + base.ownerId * 0.9);
+    const remaining = THREE.MathUtils.clamp(base.shieldTimer / BASE_SHIELD_DURATION_SECONDS, 0, 1);
+    if (base.shield.material) {
+      base.shield.material.opacity = 0.1 + pulse * 0.08 + (1 - remaining) * 0.06;
+    }
+    if (base.shieldRing.material) {
+      base.shieldRing.material.opacity = 0.28 + pulse * 0.2;
+    }
+    base.shield.rotation.y += 0.0016;
+    base.shieldRing.rotation.z += 0.004;
   }
 
   applyBlastMotion(vehicle, dt) {
