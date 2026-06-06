@@ -1185,6 +1185,37 @@ export function makeBase(options = {}) {
   captureRing.rotation.x = Math.PI / 2;
   group.add(captureRing);
 
+  const shieldRadius = radius + 3.6;
+  const shield = new THREE.Mesh(
+    new THREE.SphereGeometry(shieldRadius, 40, 20, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshBasicMaterial({
+      color: accent,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  shield.visible = false;
+  shield.position.y = 0.02;
+  group.add(shield);
+
+  const shieldRing = new THREE.Mesh(
+    new THREE.TorusGeometry(shieldRadius, 0.22, 12, 96),
+    new THREE.MeshBasicMaterial({
+      color: accent,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }),
+  );
+  shieldRing.visible = false;
+  shieldRing.position.y = 0.18;
+  shieldRing.rotation.x = Math.PI / 2;
+  group.add(shieldRing);
+
   for (let i = 0; i < 10; i += 1) {
     const angle = (i / 10) * Math.PI * 2;
     const wall = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.05, 0.62), wallMaterial);
@@ -1292,6 +1323,9 @@ export function makeBase(options = {}) {
   group.userData.muzzle = muzzle;
   group.userData.captureRing = captureRing;
   group.userData.perimeter = perimeter;
+  group.userData.shield = shield;
+  group.userData.shieldRing = shieldRing;
+  group.userData.shieldRadius = shieldRadius;
   group.userData.badComputer = computer;
   group.userData.badComputerScreen = screen;
   group.userData.badComputerSmoke = smoke;
